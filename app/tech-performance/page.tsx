@@ -2,11 +2,15 @@ import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halops
 import { syncCallActivity } from "@/lib/integrations/unitedCloud";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import { getTechPerformance, getTechOrgKpis, syncTicketLoadHistory } from "@/lib/services/techPerformance";
-import { getServiceDeskHealthSnapshot } from "@/lib/services/serviceDeskHealth";
+import { getServiceDeskHealthSnapshot, getSlaAtRiskTickets } from "@/lib/services/serviceDeskHealth";
+import { generateManagerAlerts } from "@/lib/services/managerAlerts";
 import { TechPerformanceRow } from "@/components/tech-performance/TechPerformanceRow";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
 import { OrgKpiStrip } from "@/components/tech-performance/OrgKpiStrip";
 import { ServiceDeskHealthSection } from "@/components/service-desk/ServiceDeskHealthSection";
+import { NeedsAttentionSection } from "@/components/service-desk/NeedsAttentionSection";
+import { SlaAtRiskSection } from "@/components/service-desk/SlaAtRiskSection";
+import { ManagerActionQueue } from "@/components/service-desk/ManagerActionQueue";
 
 export default async function TechPerformancePage() {
   const [ticketSync, timeGapSync, callSync] = await Promise.all([
@@ -18,13 +22,28 @@ export default async function TechPerformancePage() {
   // so both this week's TicketLoadWeekly snapshot and the new Service
   // Desk Health section reflect freshly-synced ticket data, not whatever
   // was on disk before this page load.
-  const [ticketLoadSync, directory, healthSnapshot] = await Promise.all([
+  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk] = await Promise.all([
     syncTicketLoadHistory(),
     getContactDirectory().catch(() => null),
     getServiceDeskHealthSnapshot(),
+    getSlaAtRiskTickets(),
   ]);
   const { techs, org, todayIndex, lastWeek } = await getTechPerformance(directory);
   const orgKpis = getTechOrgKpis(techs, org, lastWeek);
+  // Sum of each tech's own pro-rated expectedHoursToDate (techPerformance.ts)
+  // rather than a second weekFraction computation here — one source of
+  // truth for "how far into the week are we," reused rather than redone.
+  const expectedHoursToDate = techs.reduce((sum, t) => sum + t.expectedHoursToDate, 0);
+  const alerts = await generateManagerAlerts({
+    health: healthSnapshot,
+    slaAtRisk,
+    techs,
+    org,
+    lastWeek,
+    todayIndex,
+    expectedHoursToDate,
+    directory,
+  });
   const syncErrors = [
     ticketSync.error && `HaloPSA: ${ticketSync.error}`,
     timeGapSync.error && `HaloPSA: ${timeGapSync.error}`,
@@ -49,6 +68,18 @@ export default async function TechPerformancePage() {
 
       <div className="mt-6">
         <ServiceDeskHealthSection snapshot={healthSnapshot} />
+      </div>
+
+      <div className="mt-6">
+        <NeedsAttentionSection alerts={alerts} />
+      </div>
+
+      <div className="mt-6">
+        <SlaAtRiskSection tickets={slaAtRisk} />
+      </div>
+
+      <div className="mt-6">
+        <ManagerActionQueue alerts={alerts} />
       </div>
 
       <div className="mt-6">

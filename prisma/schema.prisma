@@ -209,6 +209,14 @@ model TicketSnapshot {
   id             String         @id @default(cuid())
   haloTicketId   String         @unique
   haloClientId   String?
+  // Raw client_name off the ticket itself — confirmed live to be
+  // reliably populated (50/50 open tickets on a real sync) and already
+  // on the same cheap list endpoint this app fetches, so this is a
+  // simpler, more available source than joining against the Client
+  // table (which only has rows for clients that have gone through the
+  // separate Client Profitability sync). Null only for genuinely
+  // client-less tickets (e.g. an automated vendor-alert ticket).
+  clientName     String?
   summary        String
   status         String
   priority       TicketPriority
@@ -270,6 +278,7 @@ model TicketSnapshot {
 model TicketCloseLog {
   id           String         @id @default(cuid())
   haloTicketId String         @unique
+  clientName   String?
   summary      String
   priority     TicketPriority
   assignedTech String

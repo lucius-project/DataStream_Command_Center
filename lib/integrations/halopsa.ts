@@ -189,6 +189,7 @@ async function reconcileTickets(liveHaloTicketIds: string[]): Promise<void> {
     await prisma.ticketCloseLog.upsert({
       where: { haloTicketId: t.haloTicketId },
       update: {
+        clientName: t.clientName,
         summary: t.summary,
         priority: t.priority,
         assignedTech: t.assignedTech,
@@ -201,6 +202,7 @@ async function reconcileTickets(liveHaloTicketIds: string[]): Promise<void> {
       },
       create: {
         haloTicketId: t.haloTicketId,
+        clientName: t.clientName,
         summary: t.summary,
         priority: t.priority,
         assignedTech: t.assignedTech,
@@ -274,6 +276,11 @@ async function syncLiveTickets(credential: {
     const respondedAt = mapHaloDate(raw, ["responsedate"]);
     const lastActionAt = mapHaloDate(raw, ["lastactiondate"]);
     const haloClientId = firstString(raw, ["client_id", "clientid"]) ?? null;
+    // Raw client_name off the ticket — confirmed live to be reliably
+    // populated (50/50 on a real open-ticket sync) and already on this
+    // same list response. See the field's comment on TicketSnapshot in
+    // schema.prisma for why this is preferred over joining the Client table.
+    const clientName = firstString(raw, ["client_name"]) ?? null;
 
     await prisma.ticketSnapshot.upsert({
       where: { haloTicketId },
@@ -289,6 +296,7 @@ async function syncLiveTickets(credential: {
         respondedAt,
         lastActionAt,
         haloClientId,
+        clientName,
         lastUpdatedAt: new Date(),
       },
       create: {
@@ -305,6 +313,7 @@ async function syncLiveTickets(credential: {
         respondedAt,
         lastActionAt,
         haloClientId,
+        clientName,
         lastUpdatedAt: new Date(),
       },
     });

@@ -273,3 +273,78 @@ export async function getCallAnswerRateTrend(directory: ContactDirectory | null)
     monthly,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Missed-call callback tracking
+// ---------------------------------------------------------------------------
+
+// A missed call counts as "returned" once any later outbound call to the
+// same number exists — not any outbound call ever, only one that happened
+// *after* the miss, since an earlier unrelated call to that number
+// obviously isn't a callback. Judgment call, not a cited industry figure,
+// same honesty pattern as every other threshold in this app.
+const CALLBACK_TARGET_MINUTES = 15;
+const CALLBACK_LOOKBACK_HOURS = 8;
+
+export type UnreturnedCall = {
+  id: string;
+  externalNumber: string;
+  companyName: string | null;
+  missedAt: Date;
+  minutesSinceMissed: number;
+};
+
+// Scoped to today's business-hours, genuinely-missed (excludeFalseMisses
+// already applied) inbound calls — a call that never rang a desk phone
+// or was actually answered by someone else was never "missed" in the
+// first place, so it can't be "unreturned" either. Only flags a miss
+// once CALLBACK_TARGET_MINUTES has actually elapsed — a call missed 2
+// minutes ago isn't overdue yet, it just hasn't been called back.
+export async function getUnreturnedMissedCalls(directory: ContactDirectory | null): Promise<UnreturnedCall[]> {
+  const now = new Date();
+  const lookbackStart = new Date(now.getTime() - CALLBACK_LOOKBACK_HOURS * 60 * 60 * 1000);
+
+  const rawCalls = await prisma.callRecord.findMany({
+    where: { startAt: { gte: lookbackStart } },
+    select: { id: true, startAt: true, missed: true, direction: true, externalNumber: true, internalExtension: true },
+    orderBy: { startAt: "asc" },
+  });
+  const calls = excludeFalseMisses(
+    rawCalls.filter((c) => isBusinessHours(c.startAt)),
+    directory,
+  );
+
+  const missedInbound = calls.filter((c) => c.missed && c.direction === "Inbound" && c.externalNumber);
+  if (missedInbound.length === 0) return [];
+
+  // Every outbound call's number, for a fast "was this number called
+  // back at all" pre-check before the per-call timestamp comparison.
+  const outboundByNumber = new Map<string, Date[]>();
+  for (const c of calls) {
+    if (c.direction === "Outbound" && c.externalNumber) {
+      const arr = outboundByNumber.get(c.externalNumber) ?? [];
+      arr.push(c.startAt);
+      outboundByNumber.set(c.externalNumber, arr);
+    }
+  }
+
+  const unreturned: UnreturnedCall[] = [];
+  for (const call of missedInbound) {
+    const externalNumber = call.externalNumber!;
+    const laterOutbound = (outboundByNumber.get(externalNumber) ?? []).some((t) => t > call.startAt);
+    if (laterOutbound) continue;
+
+    const minutesSinceMissed = Math.round((now.getTime() - call.startAt.getTime()) / 60000);
+    if (minutesSinceMissed < CALLBACK_TARGET_MINUTES) continue;
+
+    unreturned.push({
+      id: call.id,
+      externalNumber,
+      companyName: directory?.phoneToCompany.get(externalNumber) ?? null,
+      missedAt: call.startAt,
+      minutesSinceMissed,
+    });
+  }
+
+  return unreturned.sort((a, b) => b.minutesSinceMissed - a.minutesSinceMissed);
+}

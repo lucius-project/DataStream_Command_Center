@@ -13,6 +13,7 @@
 // substituted for an outcome that isn't actually measurable yet.
 
 import { prisma } from "@/lib/prisma";
+import type { TicketPriority } from "@/app/generated/prisma/client";
 import { businessHoursElapsed } from "@/lib/dateUtils";
 import { bandHigherIsBetter, bandLowerIsBetter, type KpiStatus } from "@/lib/kpiStatus";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
@@ -380,4 +381,84 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot): Kpi[] {
       href: "/calls",
     },
   ];
+}
+
+// ---------------------------------------------------------------------------
+// SLA At Risk — real-time countdown list, distinct from Response/Resolution
+// SLA above (those are aggregate percentages; this is the specific list of
+// tickets whose deadline is coming up soon, for a manager who needs to
+// know exactly which ticket to chase next).
+// ---------------------------------------------------------------------------
+
+export type SlaAtRiskTicket = {
+  id: string;
+  haloTicketId: string;
+  clientName: string | null;
+  priority: TicketPriority;
+  assignedTech: string;
+  slaType: "response" | "resolution";
+  dueAt: Date;
+  // Negative = already past due. respondByAt/fixByAt are HaloPSA's own
+  // real deadlines (already computed against Halo's own SLA calendar),
+  // so this is a plain wall-clock countdown, not run through
+  // businessHoursElapsed — that engine is for measuring elapsed time
+  // against an *approximate* target, not for counting down to an
+  // already-precise absolute deadline.
+  minutesRemaining: number;
+};
+
+const SLA_AT_RISK_WINDOW_HOURS = 4;
+// Some HaloPSA tickets carry a respondbydate/fixbydate far in the past
+// relative to when this app first saw them (confirmed live — e.g. a
+// project-style P4 ticket opened 2026-08-10 with a respondbydate of
+// 2026-07-18, evidently inherited rather than reset). Without a lower
+// bound, one ancient breach sorts to the very top of this list forever
+// and buries the genuinely time-sensitive countdowns the section exists
+// to surface. A breach that old is a chronic-neglect problem (already
+// surfaced separately via stale-ticket alerts), not a "real-time"
+// risk — so this list only shows breaches within the lookback window.
+const SLA_AT_RISK_LOOKBACK_HOURS = 24;
+
+// A ticket can appear twice (once for its response deadline, once for
+// its resolution deadline) if both fall inside the window — that's
+// correct, they're two genuinely different countdowns a manager needs
+// to see, not a duplicate.
+export async function getSlaAtRiskTickets(): Promise<SlaAtRiskTicket[]> {
+  const now = new Date();
+  const windowEnd = new Date(now.getTime() + SLA_AT_RISK_WINDOW_HOURS * 60 * 60 * 1000);
+  const windowStart = new Date(now.getTime() - SLA_AT_RISK_LOOKBACK_HOURS * 60 * 60 * 1000);
+
+  const tickets = await prisma.ticketSnapshot.findMany({
+    where: { OR: [{ respondByAt: { not: null } }, { fixByAt: { not: null } }] },
+  });
+
+  const results: SlaAtRiskTicket[] = [];
+  for (const t of tickets) {
+    if (t.respondByAt && !t.respondedAt && t.respondByAt <= windowEnd && t.respondByAt >= windowStart) {
+      results.push({
+        id: t.id,
+        haloTicketId: t.haloTicketId,
+        clientName: t.clientName,
+        priority: t.priority,
+        assignedTech: t.assignedTech,
+        slaType: "response",
+        dueAt: t.respondByAt,
+        minutesRemaining: Math.round((t.respondByAt.getTime() - now.getTime()) / 60000),
+      });
+    }
+    if (t.fixByAt && t.fixByAt <= windowEnd && t.fixByAt >= windowStart) {
+      results.push({
+        id: t.id,
+        haloTicketId: t.haloTicketId,
+        clientName: t.clientName,
+        priority: t.priority,
+        assignedTech: t.assignedTech,
+        slaType: "resolution",
+        dueAt: t.fixByAt,
+        minutesRemaining: Math.round((t.fixByAt.getTime() - now.getTime()) / 60000),
+      });
+    }
+  }
+
+  return results.sort((a, b) => a.minutesRemaining - b.minutesRemaining);
 }
