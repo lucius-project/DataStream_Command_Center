@@ -42,10 +42,7 @@ export function TechPerformanceRow({ tech, todayIndex }: { tech: TechPerformance
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-baseline gap-2">
-          <span className="font-data text-xs text-text-faint">#{tech.rank}</span>
-          <span className="font-display text-base font-medium text-text">{tech.person}</span>
-        </div>
+        <span className="font-display text-base font-medium text-text">{tech.person}</span>
         <div className="flex items-center gap-3">
           <Sparkline trend={tech.trend} />
           <StatusPill status={tech.status} />

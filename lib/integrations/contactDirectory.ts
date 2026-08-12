@@ -17,6 +17,12 @@
 //                       HaloPSA) — the phone system itself is the more
 //                       authoritative source for "who sits at this
 //                       extension" anyway.
+//   systemExtensions:   extensions that are never an individual's desk —
+//                       queues, TOD routes, the auto-attendant, the
+//                       conference bridge (see unitedCloud.ts's
+//                       fetchExtensionDirectory). Used to exclude a
+//                       "missed" call that never actually reached a
+//                       desk phone from missed-call metrics.
 //
 // The two lookups are independent: HaloPSA being disconnected doesn't
 // blank out extensionToTech, and vice versa. Each source failing throws
@@ -37,6 +43,7 @@ import { getUnitedCloudExtensionDirectory } from "./unitedCloud";
 export type ContactDirectory = {
   phoneToCompany: Map<string, string>;
   extensionToTech: Map<string, Tech>;
+  systemExtensions: Set<string>;
 };
 
 const PHONE_FIELDS = ["phonenumber", "phonenumber_preferred", "sitephonenumber"];
@@ -84,11 +91,15 @@ async function fetchPhoneToCompany(): Promise<Map<string, string>> {
 }
 
 async function fetchDirectory(): Promise<ContactDirectory> {
-  const [phoneToCompany, extensionToTech] = await Promise.all([
+  const [phoneToCompany, unitedCloudDirectory] = await Promise.all([
     fetchPhoneToCompany(),
     getUnitedCloudExtensionDirectory(),
   ]);
-  return { phoneToCompany, extensionToTech };
+  return {
+    phoneToCompany,
+    extensionToTech: unitedCloudDirectory.extensionToTech,
+    systemExtensions: unitedCloudDirectory.systemExtensions,
+  };
 }
 
 export async function getContactDirectory(): Promise<ContactDirectory> {

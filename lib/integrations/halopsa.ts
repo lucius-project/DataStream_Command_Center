@@ -168,12 +168,52 @@ function mapHaloPriority(raw: RawHaloRecord): TicketPriority {
 // actually disappear, not accumulate forever. Any AttentionFlag tied to a
 // removed ticket is removed with it, since a flag about a ticket that no
 // longer exists in the open-ticket feed doesn't stand on its own.
+//
+// Before deleting, each departing ticket is snapshotted into
+// TicketCloseLog — see that model's comment in schema.prisma for why
+// (Created-vs-Closed, Net Ticket Change, and Resolution SLA all need to
+// know about tickets that just closed, which TicketSnapshot itself can't
+// answer once the row is gone). Uses whatever fields are already cached
+// locally — no extra HaloPSA call. Skipped for the mock/disconnected
+// path (syncMockTickets never calls this), so Created/Closed/Resolution
+// SLA correctly read "unavailable" rather than fabricated until a real
+// HaloPSA connection exists.
 async function reconcileTickets(liveHaloTicketIds: string[]): Promise<void> {
   const stale = await prisma.ticketSnapshot.findMany({
     where: { haloTicketId: { notIn: liveHaloTicketIds } },
-    select: { id: true },
   });
   if (stale.length === 0) return;
+
+  const closedAt = new Date();
+  for (const t of stale) {
+    await prisma.ticketCloseLog.upsert({
+      where: { haloTicketId: t.haloTicketId },
+      update: {
+        summary: t.summary,
+        priority: t.priority,
+        assignedTech: t.assignedTech,
+        department: t.department,
+        openedAt: t.openedAt,
+        respondByAt: t.respondByAt,
+        fixByAt: t.fixByAt,
+        respondedAt: t.respondedAt,
+        closedAt,
+      },
+      create: {
+        haloTicketId: t.haloTicketId,
+        summary: t.summary,
+        priority: t.priority,
+        assignedTech: t.assignedTech,
+        department: t.department,
+        openedAt: t.openedAt,
+        respondByAt: t.respondByAt,
+        fixByAt: t.fixByAt,
+        respondedAt: t.respondedAt,
+        closedAt,
+      },
+    });
+  }
+
   const staleIds = stale.map((t) => t.id);
   await prisma.attentionFlag.deleteMany({ where: { ticketId: { in: staleIds } } });
   await prisma.ticketSnapshot.deleteMany({ where: { id: { in: staleIds } } });
@@ -225,12 +265,48 @@ async function syncLiveTickets(credential: {
     // is due) is the real SLA field; "fixbydate" (resolution due) as a
     // fallback for tickets without a response deadline.
     const slaDueAt = mapHaloDate(raw, ["respondbydate", "fixbydate"]);
+    // Unmerged versions of the above, plus the actual response timestamp
+    // and last-activity timestamp — all confirmed present on this same
+    // list endpoint response, no extra request needed. See the field
+    // comments on TicketSnapshot in schema.prisma for what each backs.
+    const respondByAt = mapHaloDate(raw, ["respondbydate"]);
+    const fixByAt = mapHaloDate(raw, ["fixbydate"]);
+    const respondedAt = mapHaloDate(raw, ["responsedate"]);
+    const lastActionAt = mapHaloDate(raw, ["lastactiondate"]);
     const haloClientId = firstString(raw, ["client_id", "clientid"]) ?? null;
 
     await prisma.ticketSnapshot.upsert({
       where: { haloTicketId },
-      update: { summary, status, priority, assignedTech, department, slaDueAt, haloClientId, lastUpdatedAt: new Date() },
-      create: { haloTicketId, summary, status, priority, assignedTech, department, openedAt, slaDueAt, haloClientId, lastUpdatedAt: new Date() },
+      update: {
+        summary,
+        status,
+        priority,
+        assignedTech,
+        department,
+        slaDueAt,
+        respondByAt,
+        fixByAt,
+        respondedAt,
+        lastActionAt,
+        haloClientId,
+        lastUpdatedAt: new Date(),
+      },
+      create: {
+        haloTicketId,
+        summary,
+        status,
+        priority,
+        assignedTech,
+        department,
+        openedAt,
+        slaDueAt,
+        respondByAt,
+        fixByAt,
+        respondedAt,
+        lastActionAt,
+        haloClientId,
+        lastUpdatedAt: new Date(),
+      },
     });
   }
 

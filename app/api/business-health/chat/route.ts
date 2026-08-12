@@ -13,6 +13,7 @@ import { getBusinessHealthSnapshot } from "@/lib/services/businessHealth";
 import { getDispatchTickets, getTimeGaps } from "@/lib/services/operations";
 import { getDeviceHealthSummary } from "@/lib/services/deviceHealth";
 import { getCallActivitySummary } from "@/lib/services/callActivity";
+import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -151,9 +152,10 @@ const getServiceHealth = betaZodTool({
   description: "Get device fleet health, today's call activity, and the list of currently offline devices.",
   inputSchema: z.object({}),
   run: async () => {
+    const directory = await getContactDirectory().catch(() => null);
     const [devices, calls, offline] = await Promise.all([
       getDeviceHealthSummary(),
-      getCallActivitySummary(),
+      getCallActivitySummary(directory),
       prisma.ninjaDevice.findMany({
         where: { offline: true },
         select: { displayName: true, lastContact: true, osName: true },
@@ -177,7 +179,7 @@ The 8 KPIs you'll see from get_kpi_snapshot, with their thresholds:
 - Escalations: red if any CEO_REVIEW flag is open or count >=5, yellow 1-4, green 0. Flags are per (ticket, type) and are not re-raised after a human resolves or snoozes them — this counts unresolved escalations, not all-time volume.
 - Device Fleet: green >=98% online, yellow 90-98%, red <90%. Point-in-time — devices powered off overnight read as offline.
 - Seat Reconciliation: red if any client's installed-vs-billed count is >20% off or 3+ clients mismatched, yellow for 1-2 minor mismatches, green if none. Only covers clients whose profile page has been visited at least once.
-- Missed Calls: green <10%, yellow 10-20%, red >20% of today's calls.
+- Call Answer Rate: green >=90%, yellow 80-90%, red <80% of today's calls answered.
 
 Honesty rules — follow these strictly:
 - If a metric isn't in get_kpi_snapshot's locked list is asked about (CSAT/NPS, client churn rate, true MRR, CAC/CLV, patch/endpoint compliance %, first response time), say plainly it isn't tracked yet and name what would need to be connected — never estimate or guess a number for these.

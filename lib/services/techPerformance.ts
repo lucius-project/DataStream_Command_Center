@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import { startOfWeek, endOfWeek, weekFractionElapsed, todayWeekdayIndex } from "@/lib/dateUtils";
+import { startOfWeek, endOfWeek, weekFractionElapsed, todayWeekdayIndex, isBusinessHours } from "@/lib/dateUtils";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { matchKnownTech } from "@/lib/integrations/haloShared";
 import { paceSeverity } from "@/lib/hoursSeverity";
 import { bandHigherIsBetter, bandLowerIsBetter, type KpiStatus } from "@/lib/kpiStatus";
 import type { Kpi, KpiTrend } from "./businessHealth";
 import type { ContactDirectory } from "@/lib/integrations/contactDirectory";
+import { excludeFalseMisses } from "./callActivity";
 import { getLoadPerTech } from "./operations";
 
 const TREND_WEEKS = 8;
@@ -21,12 +22,14 @@ export type TechStatus = "green" | "yellow" | "red";
 
 export type TechPerformance = {
   person: string;
-  rank: number;
-  // Worst-of hours-utilization / P1-count / aging-count, the same three
-  // categories scoreOf ranks on — a single glanceable signal instead of
-  // making the reader mentally combine eight separate numbers. `flag` is
-  // the plain-English reason for a non-green status (the worst category's
-  // own explanation); null when status is green — nothing to explain.
+  // Worst-of hours-utilization / P1-count / aging-count — a single
+  // glanceable signal instead of making the reader mentally combine
+  // eight separate numbers. `flag` is the plain-English reason for a
+  // non-green status (the worst category's own explanation); null when
+  // status is green — nothing to explain. Deliberately no composite
+  // rank/leaderboard position here — this is a coaching tool, not a
+  // leaderboard (see deriveTechStatus for the same three categories,
+  // used for status only).
   status: TechStatus;
   flag: string | null;
   expectedHours: number;
@@ -111,10 +114,18 @@ async function getCallStatsByTech(
   const stats = new Map<Tech, CallStats>();
   if (!directory) return stats;
 
-  const calls = await prisma.callRecord.findMany({
+  const rawCalls = await prisma.callRecord.findMany({
     where: { startAt: { gte: range.start, lte: range.end }, internalExtension: { not: null } },
     select: { internalExtension: true, direction: true, missed: true, durationSeconds: true, startAt: true, answeredAt: true },
   });
+  // isBusinessHours (dateUtils.ts): after-hours calls route to voicemail
+  // rather than ringing a tech. excludeFalseMisses (callActivity.ts):
+  // strips queue-abandons that never reached a desk phone and
+  // simultaneous-ring duplicate legs where a different tech actually
+  // answered the same call — both would otherwise inflate missed counts
+  // and dilute pickup rate/ring time for something nobody was ever
+  // meant (or able) to answer.
+  const calls = excludeFalseMisses(rawCalls.filter((c) => isBusinessHours(c.startAt)), directory);
 
   for (const call of calls) {
     const tech = call.internalExtension ? directory.extensionToTech.get(call.internalExtension) : undefined;
@@ -273,7 +284,9 @@ export async function getTechPerformance(directory: ContactDirectory | null): Pr
 
   const weekFraction = weekFractionElapsed();
 
-  const unranked = KNOWN_TECHS.map((person) => {
+  // KNOWN_TECHS order (alphabetical-ish, fixed) — no performance ranking.
+  // This is a coaching tool, not a leaderboard.
+  const techs = KNOWN_TECHS.map((person) => {
     const gap = currentByPerson.get(person);
     const l = loadByPerson.get(person);
     const c = callStats.get(person);
@@ -310,7 +323,7 @@ export async function getTechPerformance(directory: ContactDirectory | null): Pr
   const org = summarizeOrg(KNOWN_TECHS, { currentByPerson, loadByPerson, callStats, dailyByPerson });
   const lastWeek = summarizeLastWeek(KNOWN_TECHS, lastWeekGaps, lastWeekCallStats, lastWeekTicketLoad);
 
-  return { techs: rankByPerformance(unranked), org, todayIndex: todayWeekdayIndex(), lastWeek };
+  return { techs, org, todayIndex: todayWeekdayIndex(), lastWeek };
 }
 
 // Last week's comparable org-level figures, for the KPI strip's
@@ -445,10 +458,11 @@ function summarizeOrg(
 
 const TECH_STATUS_RANK: Record<TechStatus, number> = { red: 3, yellow: 2, green: 1 };
 
-// Same three categories as scoreOf, turned into a single glanceable
-// status + one-line reason instead of ranking points. Deliberately not
-// pro-rated by day-of-week (unlike the org Team Utilization KPI below) —
-// this drives the same progress bar already shown on the card, and a
+// Three categories (hours pace, P1 count, aging count) reduced to a
+// single glanceable status + one-line reason — a coaching signal, not a
+// ranking. Deliberately not pro-rated by day-of-week (unlike the org
+// Team Utilization KPI below) — this drives the same progress bar
+// already shown on the card, and a
 // status badge disagreeing with the bar right next to it would be more
 // confusing than Monday's bar reading a little empty.
 function deriveTechStatus(t: {
@@ -477,52 +491,6 @@ function deriveTechStatus(t: {
   return { status: worst.status, flag: worst.status === "green" ? null : worst.flag };
 }
 
-// Composite rank, best (#1) to worst — three equally-weighted categories,
-// 0-2 points each (max 6): hours utilization (reuses the same band as
-// Team Time Gaps), open P1 count, and aging-ticket count.
-//
-// Deliberately excludes missed calls / pickup rate: HaloPSA's phone
-// system rings the whole team at once for an inbound call (a hunt
-// group), so an individual CDR's internalExtension for a *missed* call
-// reflects whichever extension the record happened to log, not "the one
-// person who should have answered" — scoring that would be penalizing a
-// guess, not a measured fact. (Answered calls are fine to attribute —
-// whoever's extension is on the record actually picked up — which is
-// why avgTalkMinutes/avgAnswerSeconds stay on TechPerformance; only the
-// negative signal is the unreliable one. See TechOrgSummary for where
-// missed/pickup remain valid, at the whole-team level.)
-//
-// P1/aging are scored *relative to whether the tech had any tickets at
-// all* — a tech with zero open tickets this week gets a neutral 1 point
-// there, rather than the max 2. Without this, a tech who simply has no
-// tickets assigned this week (light assignment) would trivially "win"
-// both categories by having nothing to count, outranking techs who are
-// actively closing tickets cleanly. "No workload this week" isn't the
-// same as "handled it perfectly."
-//
-// Ties break on hours utilization, then on KNOWN_TECHS order for
-// determinism. This is a judgment call, not a measured fact — the score
-// itself isn't shown, only the resulting order, so it doesn't read as
-// more precise than it is.
-function scoreOf(t: Omit<TechPerformance, "rank">): number {
-  const hoursPoints = { ok: 2, warn: 1, critical: 0 }[paceSeverity(t.pacePct)];
-  const hasTickets = t.openCount > 0;
-  const p1Points = !hasTickets ? 1 : t.p1Count === 0 ? 2 : t.p1Count <= 2 ? 1 : 0;
-  const agingPoints = !hasTickets ? 1 : t.agingCount === 0 ? 2 : t.agingCount <= 4 ? 1 : 0;
-  return hoursPoints + p1Points + agingPoints;
-}
-
-function rankByPerformance(list: Omit<TechPerformance, "rank">[]): TechPerformance[] {
-  return list
-    .map((t) => ({ t, score: scoreOf(t) }))
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
-        b.t.pacePct - a.t.pacePct ||
-        KNOWN_TECHS.indexOf(a.t.person as Tech) - KNOWN_TECHS.indexOf(b.t.person as Tech),
-    )
-    .map(({ t }, i) => ({ ...t, rank: i + 1 }));
-}
 
 // ---------------------------------------------------------------------------
 // Org-wide "at a glance" KPI strip — same Kpi shape/visual language as the

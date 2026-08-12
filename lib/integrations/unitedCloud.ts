@@ -199,6 +199,22 @@ export async function syncCallActivity(): Promise<{ synced: number; error?: stri
   }
 }
 
+export type UnitedCloudExtensionDirectory = {
+  extensionToTech: Map<string, Tech>;
+  // Extensions that are never an individual's desk phone — call queues,
+  // time-of-day routes, the auto-attendant, the conference bridge —
+  // confirmed live via each user record's own "service-code" field
+  // ("system-queue", "system-tod", "system-aa", "system-conf"; a real
+  // person's record has an empty service-code). A call whose
+  // internalExtension lands on one of these was never actually ringing
+  // anyone's desk — it was still being routed/queued/held when it
+  // disconnected — so a "missed" call here is not a person failing to
+  // answer a ringing phone. Used to exclude these from missed-call
+  // metrics (see excludeFalseMisses in callActivity.ts) without
+  // resorting to a guessed duration cutoff or a hardcoded extension list.
+  systemExtensions: Set<string>;
+};
+
 // Extension -> tech, sourced from United Cloud's own /domains/{domain}/users
 // directory rather than HaloPSA's agent list. Confirmed live: this endpoint
 // carries name-first-name/name-last-name per extension directly from the
@@ -208,10 +224,11 @@ export async function syncCallActivity(): Promise<{ synced: number; error?: stri
 // matchKnownTech usage elsewhere). Non-person extensions (voicemail boxes,
 // queues, conference bridges, TOD routes) simply won't substring-match
 // any KNOWN_TECHS name and are silently skipped, not guessed.
-async function fetchExtensionDirectory(): Promise<Map<string, Tech>> {
-  const map = new Map<string, Tech>();
+async function fetchExtensionDirectory(): Promise<UnitedCloudExtensionDirectory> {
+  const extensionToTech = new Map<string, Tech>();
+  const systemExtensions = new Set<string>();
   const credential = await prisma.unitedCloudCredential.findUnique({ where: { id: "unitedcloud" } });
-  if (!credential) return map;
+  if (!credential) return { extensionToTech, systemExtensions };
 
   const apiKey = decryptToken(credential.encryptedApiKey);
   const base = normalizeBaseUrl(credential.apiBaseUrl);
@@ -226,17 +243,25 @@ async function fetchExtensionDirectory(): Promise<Map<string, Tech>> {
   const users = (await res.json()) as Record<string, unknown>[];
   for (const user of users) {
     const extension = firstString(user, ["user"]);
+    if (!extension) continue;
+
+    const serviceCode = firstString(user, ["service-code"]);
+    if (serviceCode?.startsWith("system-")) {
+      systemExtensions.add(extension);
+      continue;
+    }
+
     const firstName = firstString(user, ["name-first-name"]);
     const lastName = firstString(user, ["name-last-name"]);
-    if (!extension || !firstName) continue;
+    if (!firstName) continue;
     const fullName = lastName ? `${firstName} ${lastName}` : firstName;
     const tech = matchKnownTech(fullName, KNOWN_TECHS);
-    if (tech) map.set(extension, tech);
+    if (tech) extensionToTech.set(extension, tech);
   }
 
-  return map;
+  return { extensionToTech, systemExtensions };
 }
 
-export async function getUnitedCloudExtensionDirectory(): Promise<Map<string, Tech>> {
+export async function getUnitedCloudExtensionDirectory(): Promise<UnitedCloudExtensionDirectory> {
   return withComputeThrottle("unitedCloudExtensionDirectory", HOURS_THROTTLE_MS, fetchExtensionDirectory);
 }

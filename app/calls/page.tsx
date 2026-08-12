@@ -12,9 +12,8 @@ import { TechCallSummary } from "@/components/calls/TechCallSummary";
 
 export default async function CallActivityPage() {
   const sync = await syncCallActivity();
-  const [rawCalls, summary, credentialStatus, directoryResult] = await Promise.all([
+  const [rawCalls, credentialStatus, directoryResult] = await Promise.all([
     getRecentCalls(),
-    getCallActivitySummary(),
     getUnitedCloudCredentialStatus(),
     // Directory lookup (company names via HaloPSA, tech names via United
     // Cloud) is separate from the call sync above — a failure here
@@ -25,7 +24,13 @@ export default async function CallActivityPage() {
       .catch((err) => ({ directory: null, error: err instanceof Error ? err.message : "Directory lookup failed." })),
   ]);
   const calls = attachCompanyNames(rawCalls, directoryResult.directory);
-  const techStats = await getCallStatsByTechToday(directoryResult.directory);
+  // Depends on directoryResult (queue-extension/false-miss filtering —
+  // see excludeFalseMisses in callActivity.ts), so these run after it
+  // resolves rather than inside the batch above.
+  const [summary, techStats] = await Promise.all([
+    getCallActivitySummary(directoryResult.directory),
+    getCallStatsByTechToday(directoryResult.directory),
+  ]);
 
   return (
     <div className="mx-auto max-w-2xl p-4 md:p-6">

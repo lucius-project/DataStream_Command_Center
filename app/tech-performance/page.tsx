@@ -2,9 +2,11 @@ import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halops
 import { syncCallActivity } from "@/lib/integrations/unitedCloud";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import { getTechPerformance, getTechOrgKpis, syncTicketLoadHistory } from "@/lib/services/techPerformance";
+import { getServiceDeskHealthSnapshot } from "@/lib/services/serviceDeskHealth";
 import { TechPerformanceRow } from "@/components/tech-performance/TechPerformanceRow";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
 import { OrgKpiStrip } from "@/components/tech-performance/OrgKpiStrip";
+import { ServiceDeskHealthSection } from "@/components/service-desk/ServiceDeskHealthSection";
 
 export default async function TechPerformancePage() {
   const [ticketSync, timeGapSync, callSync] = await Promise.all([
@@ -12,12 +14,14 @@ export default async function TechPerformancePage() {
     syncTeamTimeGaps(),
     syncCallActivity(),
   ]);
-  // Runs after syncTicketsFromHalo (not alongside it in the batch above)
-  // so this week's TicketLoadWeekly snapshot reflects freshly-synced
-  // ticket data, not whatever was on disk before this page load.
-  const [ticketLoadSync, directory] = await Promise.all([
+  // Run after syncTicketsFromHalo (not alongside it in the batch above)
+  // so both this week's TicketLoadWeekly snapshot and the new Service
+  // Desk Health section reflect freshly-synced ticket data, not whatever
+  // was on disk before this page load.
+  const [ticketLoadSync, directory, healthSnapshot] = await Promise.all([
     syncTicketLoadHistory(),
     getContactDirectory().catch(() => null),
+    getServiceDeskHealthSnapshot(),
   ]);
   const { techs, org, todayIndex, lastWeek } = await getTechPerformance(directory);
   const orgKpis = getTechOrgKpis(techs, org, lastWeek);
@@ -29,10 +33,10 @@ export default async function TechPerformancePage() {
   ].filter((e): e is string => Boolean(e));
 
   return (
-    <div className="mx-auto max-w-3xl p-4 md:p-6">
+    <div className="mx-auto max-w-5xl p-4 md:p-6">
       <h1 className="font-display text-2xl font-semibold text-text">Tech Performance</h1>
       <p className="mt-1 text-sm text-text-muted">
-        Team health at a glance, then who&apos;s excelling and who needs attention this week.
+        Service desk health, then team and per-tech detail — everything a Service Desk Manager needs today.
       </p>
 
       {syncErrors.length > 0 && (
@@ -44,6 +48,14 @@ export default async function TechPerformancePage() {
       )}
 
       <div className="mt-6">
+        <ServiceDeskHealthSection snapshot={healthSnapshot} />
+      </div>
+
+      <div className="mt-6">
+        <h2 className="font-display text-sm font-medium text-text-muted">Team Detail</h2>
+      </div>
+
+      <div className="mt-3">
         <OrgKpiStrip kpis={orgKpis} />
       </div>
 

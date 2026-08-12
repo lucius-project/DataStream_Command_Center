@@ -43,3 +43,68 @@ export function todayWeekdayIndex(): number {
   if (day === 0 || day === 6) return 4;
   return day - 1;
 }
+
+// Mon-Fri, 8:30am-5:00pm — used to exclude after-hours calls from every
+// call-performance calculation (answer rate, pickup rate, ring/talk
+// time, per-tech in/out counts). After-hours inbound calls route to
+// voicemail rather than ringing a tech (confirmed operational fact, not
+// a guess), so counting them as "missed" would penalize the team for
+// calls nobody was ever meant to answer. Doesn't affect the raw call log
+// itself (Call Activity still lists every synced call, business hours
+// or not) — only the calculated stats built on top of it.
+//
+// Uses the server's local time via Date's getDay/getHours, same implicit
+// "server TZ = business TZ" assumption startOfWeek/endOfWeek/
+// weekFractionElapsed above already make — CDR timestamps are stored as
+// real UTC instants (see unitedCloud.ts), so this only produces correct
+// results if the server runs in the business's own timezone. Confirmed
+// true in this deployment (America/Vancouver); revisit with an explicit
+// Intl.DateTimeFormat timeZone conversion if that ever changes.
+export function isBusinessHours(date: Date): boolean {
+  const day = date.getDay(); // 0 = Sun, 1 = Mon, ... 6 = Sat
+  if (day === 0 || day === 6) return false;
+  const minutesSinceMidnight = date.getHours() * 60 + date.getMinutes();
+  return minutesSinceMidnight >= 8 * 60 + 30 && minutesSinceMidnight < 17 * 60;
+}
+
+const BUSINESS_DAY_START_MIN = 8 * 60 + 30; // 8:30am
+const BUSINESS_DAY_END_MIN = 17 * 60; // 5:00pm
+
+// Business hours (Mon-Fri, 8:30am-5:00pm) elapsed between two timestamps —
+// the one shared engine for ticket aging/SLA math, same business-hours
+// definition as isBusinessHours above (not a second, independently-tuned
+// implementation). Without this, a ticket opened Friday at 4pm would read
+// as "~65 hours old" by Monday morning wall-clock time, even though only
+// ~30 business minutes have actually elapsed — exactly the false alarm
+// this function exists to prevent. Walks day-by-day (not hour-by-hour)
+// for correctness on multi-week spans without being slow, clamping each
+// day's business window to the [start, end] interval and summing only
+// the overlap; weekends contribute zero regardless of how much wall-clock
+// time they span.
+export function businessHoursElapsed(start: Date, end: Date): number {
+  if (end <= start) return 0;
+
+  let totalMinutes = 0;
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const lastDay = new Date(end);
+  lastDay.setHours(0, 0, 0, 0);
+
+  while (cursor <= lastDay) {
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) {
+      const dayStart = new Date(cursor);
+      dayStart.setHours(0, BUSINESS_DAY_START_MIN, 0, 0);
+      const dayEnd = new Date(cursor);
+      dayEnd.setHours(0, BUSINESS_DAY_END_MIN, 0, 0);
+      const windowStart = start > dayStart ? start : dayStart;
+      const windowEnd = end < dayEnd ? end : dayEnd;
+      if (windowEnd > windowStart) {
+        totalMinutes += (windowEnd.getTime() - windowStart.getTime()) / 60000;
+      }
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return totalMinutes / 60;
+}

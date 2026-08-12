@@ -215,13 +215,73 @@ model TicketSnapshot {
   assignedTech   String
   department     String
   openedAt       DateTime
+  // Kept as-is (merged respondbydate-or-fixbydate fallback) — existing
+  // consumers (Dispatch pane's SLA countdown, the >24h SLA_BREACH flag,
+  // the chat tool) all read this field and stay untouched. The three
+  // fields below are additive, sourced from the same HaloPSA sync pass,
+  // and carry the real underlying values *un-merged* — Response SLA and
+  // Resolution SLA need to know respond-by and fix-by separately, not
+  // whichever HaloPSA field happened to be set.
   slaDueAt       DateTime?
+  // respondbydate raw (response target) and fixbydate raw (resolution
+  // target) — confirmed both present on the live ticket list endpoint,
+  // no extra API call needed beyond the sync this app already does.
+  respondByAt    DateTime?
+  fixByAt        DateTime?
+  // responsedate raw — HaloPSA's own first-response timestamp. Confirmed
+  // live to carry the identical value as the ticket *detail* endpoint's
+  // first_responsedate field (cross-checked against a real ticket), but
+  // — unlike first_responsedate — already present on the cheap list
+  // endpoint this app already fetches, so Response SLA / Median First
+  // Response need zero additional HaloPSA requests.
+  respondedAt    DateTime?
+  // lastactiondate raw — used for stale-ticket detection. This is *any*
+  // update (including automated/customer ones), not specifically a
+  // technician action — HaloPSA doesn't expose "last technician action"
+  // without a per-ticket Actions fetch, which stale-ticket detection
+  // deliberately avoids (see getStaleTickets in operations.ts) to stay
+  // cheap enough to run on every page load. Treat as an honest
+  // approximation, not an exact "technician touched this" signal.
+  lastActionAt   DateTime?
   lastUpdatedAt  DateTime
 
   attentionFlags AttentionFlag[]
 
   @@index([status])
   @@index([assignedTech])
+}
+
+// A closed ticket leaves TicketSnapshot entirely (reconcileTickets in
+// halopsa.ts deletes it — TicketSnapshot only ever mirrors HaloPSA's
+// *currently open* feed) — so without this table, "tickets closed today"
+// and Resolution SLA would have nothing to measure against. Written once,
+// right before a ticket's TicketSnapshot row is deleted, carrying
+// whatever fields were already cached locally (no extra HaloPSA call).
+// closedAt is *sync detection time* (when this app noticed the ticket
+// left the open feed), not HaloPSA's own exact resolution instant — on
+// this app's every-page-load sync cadence that's normally within
+// minutes, but it's labeled honestly as detection time, not claimed as
+// precise. "Closed" here specifically means "no longer in HaloPSA's
+// open_only=true feed" — the overwhelming majority of the time that's a
+// real resolution, but it could technically also mean the ticket was
+// merged into another one (HaloPSA's merged_into_id field exists,
+// unconfirmed whether merged tickets also leave the open feed the same
+// way) — not distinguished here.
+model TicketCloseLog {
+  id           String         @id @default(cuid())
+  haloTicketId String         @unique
+  summary      String
+  priority     TicketPriority
+  assignedTech String
+  department   String
+  openedAt     DateTime
+  respondByAt  DateTime?
+  fixByAt      DateTime?
+  respondedAt  DateTime?
+  closedAt     DateTime
+  createdAt    DateTime       @default(now())
+
+  @@index([closedAt])
 }
 
 enum AttentionSource {

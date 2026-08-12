@@ -12,11 +12,12 @@
 // implying a benchmark that doesn't exist.
 
 import { prisma } from "@/lib/prisma";
-import { bandHigherIsBetter, bandLowerIsBetter, type KpiStatus } from "@/lib/kpiStatus";
+import { bandHigherIsBetter, type KpiStatus } from "@/lib/kpiStatus";
 import { weekFractionElapsed } from "@/lib/dateUtils";
 import { getDispatchTickets, getLoadPerTech, getTimeGaps } from "@/lib/services/operations";
 import { getDeviceHealthSummary } from "@/lib/services/deviceHealth";
 import { getCallActivitySummary } from "@/lib/services/callActivity";
+import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import { getNinjaRmmConnectionInfo, getUnitedCloudCredentialStatus } from "@/lib/services/integrations";
 import { ATTENTION_TYPE_RANK } from "@/lib/services/commandFlow";
 import type { AttentionType } from "@/app/generated/prisma/client";
@@ -348,33 +349,55 @@ async function kpiSeatReconciliation(): Promise<Kpi> {
   };
 }
 
-async function kpiMissedCallRate(): Promise<Kpi> {
-  const [summary, connection] = await Promise.all([getCallActivitySummary(), getUnitedCloudCredentialStatus()]);
+// Framed as the positive metric (answer rate) rather than missed-call
+// rate — same underlying numbers, but "92% answered" reads at a glance
+// as good/bad correctly with bandHigherIsBetter, matching every other
+// rate-shaped KPI on this page (Gross Margin, SLA Compliance). Thresholds
+// (90/80) match the pickup-rate bands already used on Tech Performance's
+// org KPI strip and Call Activity, so "answer rate" means the same
+// percentage everywhere in the app.
+async function kpiAnswerRate(): Promise<Kpi> {
+  // Directory failure (getContactDirectory) shouldn't block this KPI —
+  // it only narrows what excludeFalseMisses can catch (queue-abandons
+  // specifically; simultaneous-ring duplicate legs need no directory at
+  // all), same "degrade, don't break" handling as everywhere else this
+  // directory is consumed.
+  const [directory, connection] = await Promise.all([
+    getContactDirectory().catch(() => null),
+    getUnitedCloudCredentialStatus(),
+  ]);
+  const summary = await getCallActivitySummary(directory);
 
-  if (summary.totalToday === 0) {
+  // Scoped to inbound (see CallActivitySummary.inboundToday) — an
+  // outbound call the other party didn't pick up isn't a team
+  // responsiveness failure, and would otherwise pollute this
+  // percentage's denominator with calls that always "succeed" from our
+  // own side.
+  if (summary.inboundToday === 0) {
     return {
-      key: "missedCallRate",
-      label: "Missed Calls",
+      key: "answerRate",
+      label: "Call Answer Rate",
       value: null,
       display: "—",
       status: "unavailable",
-      detail: connection.configured ? "No calls yet today." : "United Cloud not connected.",
-      benchmark: "judgment default, not a universal industry figure",
+      detail: connection.configured ? "No inbound calls yet today." : "United Cloud not connected.",
+      benchmark: "healthy range 90%+",
       href: "/calls",
     };
   }
 
-  const pct = (summary.missedToday / summary.totalToday) * 100;
-  const status = bandLowerIsBetter(pct, 10, 20);
+  const answered = summary.inboundToday - summary.missedToday;
+  const pct = (answered / summary.inboundToday) * 100;
+  const status = bandHigherIsBetter(pct, 90, 80);
   const mins = Math.round(summary.avgDurationSeconds / 60);
   return {
-    key: "missedCallRate",
-    label: "Missed Calls",
+    key: "answerRate",
+    label: "Call Answer Rate",
     value: round1(pct),
     display: `${Math.round(pct)}%`,
     status,
-    detail: `${summary.missedToday} missed of ${summary.totalToday} calls today · avg ${mins}m`,
-    benchmark: "judgment default, not a universal industry figure",
+    detail: `${answered} of ${summary.inboundToday} inbound calls answered today · avg ${mins}m`,
+    benchmark: "healthy range 90%+",
     href: "/calls",
   };
 }
@@ -404,7 +427,7 @@ const REMEDIATION: Record<string, string> = {
   escalations: "Escalations need attention — a CEO review or a backlog of unresolved escalations is open",
   deviceHealth: "Device fleet health has dropped — check offline devices",
   seatReconciliation: "Seat reconciliation has drifted — installed vs billed counts don't match",
-  missedCallRate: "Missed call rate is high today",
+  answerRate: "Call answer rate is low today",
 };
 
 function buildActions(
@@ -455,7 +478,7 @@ function buildActions(
 // ---------------------------------------------------------------------------
 
 export async function getBusinessHealthSnapshot(): Promise<BusinessHealthSnapshot> {
-  const [utilization, grossMargin, ticketBacklog, slaCompliance, flags, deviceHealth, seatReconciliation, missedCallRate, clientsTotal, financialsAgg, seatAgg] =
+  const [utilization, grossMargin, ticketBacklog, slaCompliance, flags, deviceHealth, seatReconciliation, answerRate, clientsTotal, financialsAgg, seatAgg] =
     await Promise.all([
       kpiTechUtilization(),
       kpiGrossMargin(),
@@ -464,7 +487,7 @@ export async function getBusinessHealthSnapshot(): Promise<BusinessHealthSnapsho
       getRankedOpenFlags(),
       kpiDeviceHealth(),
       kpiSeatReconciliation(),
-      kpiMissedCallRate(),
+      kpiAnswerRate(),
       prisma.client.count(),
       prisma.clientFinancials.aggregate({ _count: true, _max: { updatedAt: true } }),
       prisma.seatReconciliation.aggregate({ _count: true, _max: { updatedAt: true } }),
@@ -480,7 +503,7 @@ export async function getBusinessHealthSnapshot(): Promise<BusinessHealthSnapsho
     escalations,
     deviceHealth,
     seatReconciliation,
-    missedCallRate,
+    answerRate,
   ];
 
   return {
