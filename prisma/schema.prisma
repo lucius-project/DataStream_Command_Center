@@ -1,0 +1,531 @@
+// DataStream Command Center — data model.
+//
+// Command Flow (Phase 2) has no QueueItem table: its queue is computed live
+// by merging AttentionFlag + InboxItem + RunbookItem queries, so there's
+// nothing to keep in sync. See lib/services/commandFlow.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------------------------------------------------------------------------
+// Inbox Command
+// ---------------------------------------------------------------------------
+
+enum InboxStatus {
+  NEW
+  TRIAGED
+  DELEGATED
+  SNOOZED
+  DONE
+}
+
+model InboxItem {
+  id             String      @id @default(cuid())
+  graphMessageId String      @unique
+  sender         String
+  senderEmail    String
+  subject        String
+  preview        String
+  bodyPreviewUrl String?
+  receivedAt     DateTime
+  status         InboxStatus @default(NEW)
+  delegateNote   String?
+  snoozedUntil   DateTime?
+  isNoise        Boolean     @default(false)
+  clearedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([status])
+  @@index([receivedAt])
+}
+
+enum InboxRuleMatchType {
+  SENDER_CONTAINS
+  SUBJECT_CONTAINS
+  DOMAIN
+}
+
+enum InboxRuleAction {
+  ARCHIVE
+  DEPRIORITIZE
+}
+
+model InboxRule {
+  id         String             @id @default(cuid())
+  name       String
+  matchType  InboxRuleMatchType
+  matchValue String
+  action     InboxRuleAction
+  enabled    Boolean            @default(true)
+  createdAt  DateTime           @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Auth (Microsoft Graph)
+// ---------------------------------------------------------------------------
+
+// Stores the serialized MSAL token cache (contains the refresh token),
+// encrypted at rest — never the plaintext token, never in .env.
+model OAuthToken {
+  id             String   @id @default(cuid())
+  provider       String   @unique
+  accountEmail   String
+  encryptedCache String
+  scope          String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// The Entra app registration's own credentials (as opposed to OAuthToken,
+// which is the resulting per-mailbox connection). Singleton row, id fixed
+// so upserts never need a lookup first. Secret encrypted the same way the
+// refresh token cache is — never stored or returned in plaintext.
+model MicrosoftAppCredential {
+  id                    String   @id @default("microsoft")
+  clientId              String
+  tenantId              String
+  encryptedClientSecret String
+  updatedAt             DateTime @updatedAt
+}
+
+// QuickBooks Online app registration (Intuit Developer app) — same role
+// MicrosoftAppCredential plays for Graph. Unlike NinjaRMM, this is a real
+// confidential client (Intuit issues a client secret), and needs an
+// environment flag since sandbox/production use different API hosts.
+model QuickBooksCredential {
+  id                    String   @id @default("quickbooks")
+  environment           String   @default("sandbox")
+  clientId              String
+  encryptedClientSecret String
+  updatedAt             DateTime @updatedAt
+}
+
+// The per-connection QuickBooks OAuth result (authorization-code flow).
+// realmId is the QuickBooks company ID, returned on the callback
+// alongside the code — every API call needs it. Unlike NinjaRMM's
+// refresh token (which stays the same call to call), QuickBooks rotates
+// the refresh token on every refresh — lib/auth/quickbooksOAuth.ts always
+// overwrites it.
+model QuickBooksOAuthToken {
+  id                    String   @id @default("quickbooks")
+  realmId               String
+  encryptedAccessToken  String
+  encryptedRefreshToken String
+  accessTokenExpiresAt  DateTime
+  connectedAt           DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// HaloPSA API Application credentials (OAuth2 client-credentials grant — no
+// user login step, so saving valid credentials here is what "connects" it).
+// Same singleton + encrypted-secret pattern as MicrosoftAppCredential.
+model HaloPsaCredential {
+  id                    String   @id @default("halopsa")
+  instanceUrl           String
+  clientId              String
+  encryptedClientSecret String
+  updatedAt             DateTime @updatedAt
+}
+
+// NinjaRMM API Application registration (Client ID/base URL, optional
+// secret). Confirmed live against this account, twice: (1)
+// client_credentials is unavailable — no such grant type offered when
+// creating the app, "unauthorized_client" end to end; (2) the "Add
+// client app" wizard itself shows no Client Secret field at all — this
+// account's authorization-code apps are PKCE public clients (RFC 7636),
+// confirmed against NinjaOne's own separate "Authorization Code Flow
+// with PKCE" docs page. encryptedClientSecret is kept nullable/optional
+// rather than removed, in case some accounts do get a confidential
+// (secret-bearing) app type — lib/auth/ninjaRmmOAuth.ts uses PKCE
+// regardless of whether one is present. Same app-registration role
+// MicrosoftAppCredential plays for Microsoft Graph; the per-login
+// connection itself lives in NinjaRmmOAuthToken below.
+model NinjaRmmCredential {
+  id                    String   @id @default("ninjarmm")
+  apiBaseUrl            String
+  clientId              String
+  encryptedClientSecret String?
+  updatedAt             DateTime @updatedAt
+}
+
+// The per-login NinjaRMM connection (authorization-code result). No MSAL
+// involved here (Azure-specific), so unlike OAuthToken's single
+// serialized cache blob, this stores the access/refresh token pair and
+// expiry explicitly — lib/auth/ninjaRmmOAuth.ts owns refreshing it.
+model NinjaRmmOAuthToken {
+  id                    String   @id @default("ninjarmm")
+  encryptedAccessToken  String
+  encryptedRefreshToken String
+  accessTokenExpiresAt  DateTime
+  connectedAt           DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// United Cloud (Hosted PBX, iplogin/NetSapiens API) credentials. The API
+// key itself is the bearer token — no OAuth exchange, no separate client
+// ID — so this is simpler than HaloPSA/Microsoft but the same singleton +
+// encrypted-secret pattern.
+model UnitedCloudCredential {
+  id               String   @id @default("unitedcloud")
+  apiBaseUrl       String
+  domain           String
+  encryptedApiKey  String
+  updatedAt        DateTime @updatedAt
+}
+
+// Anthropic API key for the Business Health chat. Same singleton +
+// encrypted-secret pattern as UnitedCloudCredential — the API key is the
+// bearer credential, no OAuth exchange. Deliberately NOT an env var: every
+// other integration in this app is entered on /integrations and stored
+// encrypted, and this one is no different. `model` is stored (not
+// hardcoded) so it can move to a newer Sonnet without a migration, and is
+// shown on the Integrations card so what's running is never a mystery.
+model AnthropicCredential {
+  id              String   @id @default("anthropic")
+  model           String   @default("claude-sonnet-5")
+  encryptedApiKey String
+  updatedAt       DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Operations
+// ---------------------------------------------------------------------------
+
+enum TicketPriority {
+  P1
+  P2
+  P3
+  P4
+}
+
+model TicketSnapshot {
+  id             String         @id @default(cuid())
+  haloTicketId   String         @unique
+  haloClientId   String?
+  summary        String
+  status         String
+  priority       TicketPriority
+  assignedTech   String
+  department     String
+  openedAt       DateTime
+  slaDueAt       DateTime?
+  lastUpdatedAt  DateTime
+
+  attentionFlags AttentionFlag[]
+
+  @@index([status])
+  @@index([assignedTech])
+}
+
+enum AttentionSource {
+  TICKET
+  INBOX
+  MANUAL
+}
+
+enum AttentionType {
+  ESCALATION
+  SLA_BREACH
+  CEO_REVIEW
+  OTHER
+}
+
+enum AttentionStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model AttentionFlag {
+  id           String          @id @default(cuid())
+  source       AttentionSource
+  sourceId     String?
+  ticketId     String?
+  ticket       TicketSnapshot? @relation(fields: [ticketId], references: [id])
+  type         AttentionType
+  description  String
+  status       AttentionStatus @default(OPEN)
+  assignedTo   String?
+  snoozedUntil DateTime?
+  createdAt    DateTime        @default(now())
+  resolvedAt   DateTime?
+
+  @@index([status])
+}
+
+enum TimeGapRole {
+  TECH
+  ADMIN
+}
+
+model TimeGap {
+  id             String      @id @default(cuid())
+  person         String
+  role           TimeGapRole
+  expectedHours  Float
+  loggedHours    Float
+  periodStart    DateTime
+  periodEnd      DateTime
+
+  @@unique([person, periodStart])
+  @@index([person])
+}
+
+// ---------------------------------------------------------------------------
+// Shared delegation log (Inbox Command + Operations)
+// ---------------------------------------------------------------------------
+
+enum DelegationSource {
+  INBOX
+  OPERATIONS
+  RUNBOOK
+}
+
+enum DelegationStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+}
+
+model DelegationLog {
+  id        String           @id @default(cuid())
+  source    DelegationSource
+  sourceId  String
+  note      String
+  status    DelegationStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([source, sourceId])
+}
+
+// ---------------------------------------------------------------------------
+// Runbooks
+// ---------------------------------------------------------------------------
+
+enum RunbookFrequency {
+  ONE_OFF
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model RunbookCategory {
+  id    String        @id @default(cuid())
+  name  String        @unique
+  order Int           @default(0)
+  items RunbookItem[]
+}
+
+// Due-ness is computed (see lib/services/runbooks.ts), not stored: archivedAt
+// set means "done forever" (one-off items); otherwise due if lastCompletedAt
+// is null or older than the frequency's interval.
+model RunbookItem {
+  id              String           @id @default(cuid())
+  categoryId      String
+  category        RunbookCategory  @relation(fields: [categoryId], references: [id])
+  title           String
+  description     String?
+  frequency       RunbookFrequency @default(ONE_OFF)
+  lastCompletedAt DateTime?
+  snoozedUntil    DateTime?
+  archivedAt      DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@index([categoryId])
+}
+
+// ---------------------------------------------------------------------------
+// Focus Mode
+// ---------------------------------------------------------------------------
+
+model FocusSession {
+  id              String    @id @default(cuid())
+  task            String
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  durationSeconds Int?
+  completed       Boolean   @default(false)
+
+  @@index([startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Client Profitability (HaloPSA clients, agreements, time)
+// ---------------------------------------------------------------------------
+
+// hoursThisMonth is recomputed on every sync from HaloPSA Actions — no
+// historical time-entry ledger yet, matches the report's current-month
+// scope. Revisit if a trend view is ever needed.
+//
+// ninjaOrganizationId/quickbooksCustomerId are manual cross-system links
+// (no shared ID exists across HaloPSA/NinjaRMM/QuickBooks) — set via the
+// Company Profile page's "Link accounts" panel, not auto-matched, since
+// they feed real financial numbers.
+model Client {
+  id                   String   @id @default(cuid())
+  haloClientId         String   @unique
+  name                 String
+  hoursThisMonth       Float    @default(0)
+  ninjaOrganizationId  String?
+  quickbooksCustomerId String?
+  updatedAt            DateTime @updatedAt
+
+  agreementItems AgreementItem[]
+  techHours      ClientTechHours[]
+  monthlyHours   ClientMonthlyHours[]
+  financials     ClientFinancials?
+  seatChecks     SeatReconciliation[]
+}
+
+// Recomputed on every sync (no historical ledger), same pattern as
+// Client.hoursThisMonth. Raw QuickBooks Invoices/Items/Purchases are
+// fetched live and aggregated here, not persisted — same as HaloPSA
+// Actions already work for hoursThisMonth.
+model ClientFinancials {
+  id               String   @id @default(cuid())
+  clientId         String   @unique
+  client           Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  revenueThisMonth Float    @default(0)
+  laborCost        Float    @default(0)
+  itemCost         Float    @default(0)
+  itemRevenue      Float    @default(0)
+  netProfit        Float    @default(0)
+  updatedAt        DateTime @updatedAt
+}
+
+// One row per (client, tool) — NinjaRMM's installed count for that tool
+// vs. the quantity billed on the matching HaloPSA agreement item.
+// Antivirus only for now (the only NinjaRMM signal confirmed available);
+// the shape is generic so a second tool is a small extension later.
+model SeatReconciliation {
+  id             String   @id @default(cuid())
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tool           String
+  installedCount Int
+  billedQuantity Float
+  updatedAt      DateTime @updatedAt
+
+  @@unique([clientId, tool])
+}
+
+model AgreementItem {
+  id           String   @id @default(cuid())
+  clientId     String
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name         String
+  contractType String?
+  quantity     Float    @default(1)
+  createdAt    DateTime @default(now())
+
+  @@index([clientId])
+}
+
+// Hours by tech, per client, this month — recomputed on every sync from
+// HaloPSA Actions, same "no historical ledger" pattern as
+// Client.hoursThisMonth. Powers the tech-breakdown line on the Client
+// Profitability dashboard.
+model ClientTechHours {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tech      String
+  hours     Float
+  updatedAt DateTime @updatedAt
+
+  @@unique([clientId, tech])
+  @@index([clientId])
+}
+
+// Persisted monthly hours ledger, one row per (client, calendar month) —
+// unlike hoursThisMonth/ClientTechHours (recomputed live from open tickets
+// on every page load), this is the only place historical months are kept.
+// It exists because a rolling average needs closed tickets too, and
+// re-fetching those on every request isn't viable: HaloPSA's /api/Tickets
+// hard-caps at 1000 rows with no working pagination, so backfilling it is
+// an explicit, user-triggered action (see backfillClientMonthlyHours /
+// POST /api/clients/sync-history), not something that runs automatically.
+// On a busy instance that 1000-row cap may only reach back a few weeks,
+// not a full year — the rolling-average UI labels itself by whatever date
+// range actually got backfilled rather than assuming 12 months exist.
+model ClientMonthlyHours {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  yearMonth String   // "YYYY-MM", sortable as a string
+  hours     Float
+  updatedAt DateTime @updatedAt
+
+  @@unique([clientId, yearMonth])
+  @@index([clientId])
+}
+
+// ---------------------------------------------------------------------------
+// Call Activity (United Cloud / iplogin hosted PBX CDRs)
+// ---------------------------------------------------------------------------
+
+// One row per synced Call Detail Record. CDRs are immutable history, so
+// sync only ever upserts — never deletes/reconciles like TicketSnapshot
+// does. `missed` is derived at sync time from whether answeredAt is set,
+// not trusted from a single guessed vendor field.
+model CallRecord {
+  id                String   @id @default(cuid())
+  unitedCloudCallId String   @unique
+  direction         String
+  fromLabel         String
+  toLabel           String
+  // Raw, CDR-sourced — not resolved to a company/tech name at sync time.
+  // externalNumber is the far-end party's number (last 10 digits, NANP),
+  // extracted from whichever CDR field holds it for that direction (the
+  // orig-from-uri SIP URI for inbound, orig-to-user for outbound).
+  // internalExtension is whichever of our own extensions handled the call
+  // (call-term-user for inbound, call-orig-user for outbound) — for a
+  // hunt-group call this may be the group's own pseudo-extension, not an
+  // individual's. Both are null when the source field wasn't present.
+  // Resolving these to a company name / tech name is done live at read
+  // time (see lib/integrations/haloDirectory.ts) against HaloPSA contacts
+  // and agents, not baked in here — that mapping can change independently
+  // of call history.
+  externalNumber    String?
+  internalExtension String?
+  startAt           DateTime
+  answeredAt        DateTime?
+  durationSeconds   Int
+  missed            Boolean
+  createdAt         DateTime @default(now())
+
+  @@index([startAt])
+}
+
+// ---------------------------------------------------------------------------
+// Device Health (NinjaRMM)
+// ---------------------------------------------------------------------------
+
+// One row per synced device. Unlike CDRs, /v2/devices returns the full
+// current inventory every sync, so this reconciles like TicketSnapshot
+// does — a device missing from a successful fetch gets deleted, not left
+// stale. osName is best-effort (field not confirmed on the core device
+// object, see lib/integrations/ninjaRmm.ts) until verified against a
+// real response.
+model NinjaDevice {
+  id             String    @id @default(cuid())
+  ninjaDeviceId  String    @unique
+  displayName    String
+  systemName     String?
+  organizationId String?
+  offline        Boolean
+  lastContact    DateTime?
+  osName         String?
+  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime  @default(now())
+
+  @@index([offline])
+}

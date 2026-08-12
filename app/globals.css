@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+/* Light theme (default) */
+:root {
+  color-scheme: light;
+
+  --color-bg: #fafafa;
+  --color-panel: #ffffff;
+  --color-panel-raised: #f4f4f5;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+  --color-text: #18181b;
+  --color-text-muted: #52525b;
+  --color-text-faint: #a1a1aa;
+
+  --color-accent: #4f46e5;
+  --color-accent-strong: #4338ca;
+  --color-accent-dim: #eef2ff;
+
+  --color-status-ok: #16a34a;
+  --color-status-ok-dim: #f0fdf4;
+  --color-status-warn: #d97706;
+  --color-status-warn-dim: #fffbeb;
+  --color-status-critical: #dc2626;
+  --color-status-critical-dim: #fef2f2;
+  --color-status-info: #2563eb;
+  --color-status-info-dim: #eff6ff;
+
+  --color-series-1: #4f46e5;
+  --color-series-2: #16a34a;
+}
+
+/* Dark theme — toggled via .dark on <html> (see ThemeToggle + the
+   no-flash inline script in layout.tsx). Refined neutral dark palette
+   (near-black, not the old blue-gray/amber terminal look) rather than a
+   second unrelated design. */
+.dark {
+  color-scheme: dark;
+
+  --color-bg: #0a0a0b;
+  --color-panel: #141416;
+  --color-panel-raised: #1c1c1f;
+  --color-border: #27272a;
+  --color-border-strong: #3f3f46;
+  --color-text: #f4f4f5;
+  --color-text-muted: #a1a1aa;
+  --color-text-faint: #71717a;
+
+  --color-accent: #818cf8;
+  --color-accent-strong: #a5b4fc;
+  --color-accent-dim: #1e1b4b;
+
+  --color-status-ok: #4ade80;
+  --color-status-ok-dim: #052e16;
+  --color-status-warn: #fbbf24;
+  --color-status-warn-dim: #451a03;
+  --color-status-critical: #f87171;
+  --color-status-critical-dim: #450a0a;
+  --color-status-info: #60a5fa;
+  --color-status-info-dim: #172554;
+
+  --color-series-1: #818cf8;
+  --color-series-2: #4ade80;
+}
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-panel: var(--color-panel);
+  --color-panel-raised: var(--color-panel-raised);
+  --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+  --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-faint: var(--color-text-faint);
+
+  --color-accent: var(--color-accent);
+  --color-accent-strong: var(--color-accent-strong);
+  --color-accent-dim: var(--color-accent-dim);
+
+  --color-status-ok: var(--color-status-ok);
+  --color-status-ok-dim: var(--color-status-ok-dim);
+  --color-status-warn: var(--color-status-warn);
+  --color-status-warn-dim: var(--color-status-warn-dim);
+  --color-status-critical: var(--color-status-critical);
+  --color-status-critical-dim: var(--color-status-critical-dim);
+  --color-status-info: var(--color-status-info);
+  --color-status-info-dim: var(--color-status-info-dim);
+
+  --color-series-1: var(--color-series-1);
+  --color-series-2: var(--color-series-2);
+
+  /* font-display/font-data are utility classes components opt into
+     explicitly (headings vs. numeric/tabular data); the body default
+     below is the sans font, not the mono one — see layout.tsx comment
+     for why that swap matters more than the palette here. */
+  --font-display: var(--font-geist-sans);
+  --font-data: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+::selection {
+  background: var(--color-accent-dim);
+  color: var(--color-accent-strong);
+}
