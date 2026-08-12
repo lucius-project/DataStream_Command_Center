@@ -4,11 +4,18 @@ import {
   getRecentCalls,
   getCallActivitySummary,
   getCallStatsByTechToday,
+  getPhoneAnalyticsDetail,
+  getMissedCallRecoveryStats,
+  getUnreturnedMissedCalls,
+  getCallsPerClient,
   attachCompanyNames,
 } from "@/lib/services/callActivity";
 import { getUnitedCloudCredentialStatus } from "@/lib/services/integrations";
 import { CallRow } from "@/components/calls/CallRow";
 import { TechCallSummary } from "@/components/calls/TechCallSummary";
+import { PhoneAnalyticsPanel } from "@/components/calls/PhoneAnalyticsPanel";
+import { MissedCallRecoveryPanel } from "@/components/calls/MissedCallRecoveryPanel";
+import { CallsPerClientPanel } from "@/components/calls/CallsPerClientPanel";
 
 export default async function CallActivityPage() {
   const sync = await syncCallActivity();
@@ -27,13 +34,17 @@ export default async function CallActivityPage() {
   // Depends on directoryResult (queue-extension/false-miss filtering —
   // see excludeFalseMisses in callActivity.ts), so these run after it
   // resolves rather than inside the batch above.
-  const [summary, techStats] = await Promise.all([
+  const [summary, techStats, phoneAnalytics, recoveryStats, unreturned, callsPerClient] = await Promise.all([
     getCallActivitySummary(directoryResult.directory),
     getCallStatsByTechToday(directoryResult.directory),
+    getPhoneAnalyticsDetail(directoryResult.directory),
+    getMissedCallRecoveryStats(directoryResult.directory),
+    getUnreturnedMissedCalls(directoryResult.directory),
+    getCallsPerClient(directoryResult.directory),
   ]);
 
   return (
-    <div className="mx-auto max-w-2xl p-4 md:p-6">
+    <div className="mx-auto max-w-3xl p-4 md:p-6">
       <h1 className="font-display text-2xl font-semibold text-text">Call Activity</h1>
       <p className="mt-1 text-sm text-text-muted">
         Recent calls from United Cloud, last 7 days synced.
@@ -81,6 +92,14 @@ export default async function CallActivityPage() {
       )}
 
       {calls.length > 0 && <TechCallSummary stats={techStats} />}
+
+      {calls.length > 0 && (
+        <>
+          <PhoneAnalyticsPanel detail={phoneAnalytics} />
+          <MissedCallRecoveryPanel stats={recoveryStats} unreturned={unreturned} />
+          <CallsPerClientPanel data={callsPerClient} />
+        </>
+      )}
 
       <div className="mt-6 flex flex-col gap-2">
         {calls.map((call) => (

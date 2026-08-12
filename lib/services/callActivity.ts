@@ -6,6 +6,32 @@ import type { CallRecord } from "@/app/generated/prisma/client";
 
 const RECENT_CALLS_LIMIT = 100;
 
+// Local, not imported from serviceDeskHealth.ts's equivalent median() —
+// that file already imports from this one (getCallActivitySummary), so
+// importing back would be circular. Same even/odd-averaging definition,
+// just a second small copy.
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+// Nearest-rank method — a judgment call among several valid P90
+// definitions, same honesty pattern as every other threshold in this
+// app; not claimed as a statistically "correct" P90, just a consistent
+// one.
+function percentile90(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.ceil(0.9 * sorted.length) - 1);
+  return sorted[idx];
+}
+
+// Below this many samples, a median/P90 is misleadingly precise — same
+// principle as MIN_SLA_SAMPLE elsewhere in this app.
+const MIN_PERCENTILE_SAMPLE = 5;
+
 export async function getRecentCalls() {
   return prisma.callRecord.findMany({
     orderBy: { startAt: "desc" },
@@ -286,6 +312,44 @@ export async function getCallAnswerRateTrend(directory: ContactDirectory | null)
 const CALLBACK_TARGET_MINUTES = 15;
 const CALLBACK_LOOKBACK_HOURS = 8;
 
+type MissedCallLike = {
+  id: string;
+  startAt: Date;
+  missed: boolean;
+  direction: string;
+  externalNumber: string | null;
+};
+
+type CallbackMatch<T> = { call: T; returnedAt: Date | null };
+
+// Shared by getUnreturnedMissedCalls (the live "still outstanding" queue)
+// and getMissedCallRecoveryStats (the historical callback-rate/latency
+// aggregate) — one definition of "was this missed call returned," not
+// two independently-tuned ones. `calls` should already be
+// business-hours-filtered and excludeFalseMisses-applied by the caller.
+function matchMissedCallsToCallbacks<T extends MissedCallLike>(calls: T[]): CallbackMatch<T>[] {
+  const missedInbound = calls.filter((c) => c.missed && c.direction === "Inbound" && c.externalNumber);
+  if (missedInbound.length === 0) return [];
+
+  // Every outbound call's number, for a fast "was this number called
+  // back at all" pre-check before the per-call timestamp comparison.
+  const outboundByNumber = new Map<string, Date[]>();
+  for (const c of calls) {
+    if (c.direction === "Outbound" && c.externalNumber) {
+      const arr = outboundByNumber.get(c.externalNumber) ?? [];
+      arr.push(c.startAt);
+      outboundByNumber.set(c.externalNumber, arr);
+    }
+  }
+
+  return missedInbound.map((call) => {
+    const laterOutbound = (outboundByNumber.get(call.externalNumber!) ?? [])
+      .filter((t) => t > call.startAt)
+      .sort((a, b) => a.getTime() - b.getTime());
+    return { call, returnedAt: laterOutbound[0] ?? null };
+  });
+}
+
 export type UnreturnedCall = {
   id: string;
   externalNumber: string;
@@ -314,37 +378,180 @@ export async function getUnreturnedMissedCalls(directory: ContactDirectory | nul
     directory,
   );
 
-  const missedInbound = calls.filter((c) => c.missed && c.direction === "Inbound" && c.externalNumber);
-  if (missedInbound.length === 0) return [];
-
-  // Every outbound call's number, for a fast "was this number called
-  // back at all" pre-check before the per-call timestamp comparison.
-  const outboundByNumber = new Map<string, Date[]>();
-  for (const c of calls) {
-    if (c.direction === "Outbound" && c.externalNumber) {
-      const arr = outboundByNumber.get(c.externalNumber) ?? [];
-      arr.push(c.startAt);
-      outboundByNumber.set(c.externalNumber, arr);
-    }
-  }
+  const matches = matchMissedCallsToCallbacks(calls);
 
   const unreturned: UnreturnedCall[] = [];
-  for (const call of missedInbound) {
-    const externalNumber = call.externalNumber!;
-    const laterOutbound = (outboundByNumber.get(externalNumber) ?? []).some((t) => t > call.startAt);
-    if (laterOutbound) continue;
+  for (const { call, returnedAt } of matches) {
+    if (returnedAt) continue;
 
     const minutesSinceMissed = Math.round((now.getTime() - call.startAt.getTime()) / 60000);
     if (minutesSinceMissed < CALLBACK_TARGET_MINUTES) continue;
 
     unreturned.push({
       id: call.id,
-      externalNumber,
-      companyName: directory?.phoneToCompany.get(externalNumber) ?? null,
+      externalNumber: call.externalNumber!,
+      companyName: directory?.phoneToCompany.get(call.externalNumber!) ?? null,
       missedAt: call.startAt,
       minutesSinceMissed,
     });
   }
 
   return unreturned.sort((a, b) => b.minutesSinceMissed - a.minutesSinceMissed);
+}
+
+// Matches United Cloud's own sync depth (see getCallAnswerRateTrend's
+// comment) — history only exists as far back as this integration has
+// been connected and synced regularly, so a longer window would just
+// silently under-count rather than reach further back in time.
+const ANALYTICS_WINDOW_DAYS = 7;
+
+export type MissedCallRecoveryStats = {
+  status: "available" | "insufficient_sample" | "unavailable";
+  windowDays: number;
+  missedCalls: number;
+  returnedCalls: number;
+  unreturnedCalls: number;
+  callbackPct: number | null;
+  medianCallbackMinutes: number | null;
+  p90CallbackMinutes: number | null;
+};
+
+// Historical callback rate/latency over ANALYTICS_WINDOW_DAYS — distinct
+// from getUnreturnedMissedCalls above (a live "still outstanding right
+// now" queue). A call counted "returned" here might have taken hours to
+// come back to, unlike the live queue's fixed lookback window; this is
+// the honest historical record, that's the operational alert.
+export async function getMissedCallRecoveryStats(directory: ContactDirectory | null): Promise<MissedCallRecoveryStats> {
+  const windowStart = new Date(Date.now() - ANALYTICS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  const rawCalls = await prisma.callRecord.findMany({
+    where: { startAt: { gte: windowStart } },
+    select: { id: true, startAt: true, missed: true, direction: true, externalNumber: true, internalExtension: true },
+    orderBy: { startAt: "asc" },
+  });
+  const calls = excludeFalseMisses(rawCalls.filter((c) => isBusinessHours(c.startAt)), directory);
+  const matches = matchMissedCallsToCallbacks(calls);
+
+  const missedCalls = matches.length;
+  const returned = matches.filter((m) => m.returnedAt !== null);
+  const returnedCalls = returned.length;
+  const callbackMinutes = returned.map((m) => Math.round((m.returnedAt!.getTime() - m.call.startAt.getTime()) / 60000));
+
+  const base = {
+    windowDays: ANALYTICS_WINDOW_DAYS,
+    missedCalls,
+    returnedCalls,
+    unreturnedCalls: missedCalls - returnedCalls,
+    medianCallbackMinutes: median(callbackMinutes),
+    p90CallbackMinutes: percentile90(callbackMinutes),
+  };
+
+  if (missedCalls === 0) return { ...base, status: "unavailable", callbackPct: null };
+  if (missedCalls < MIN_PERCENTILE_SAMPLE) return { ...base, status: "insufficient_sample", callbackPct: null };
+  return { ...base, status: "available", callbackPct: Math.round((returnedCalls / missedCalls) * 1000) / 10 };
+}
+
+export type PhoneAnalyticsDetail = {
+  windowDays: number;
+  inboundCalls: number;
+  outboundCalls: number;
+  answeredInbound: number;
+  missedInbound: number;
+  answerRatePct: number | null;
+  ringTimeStatus: "available" | "insufficient_sample" | "unavailable";
+  medianRingSeconds: number | null;
+  p90RingSeconds: number | null;
+  talkTimeStatus: "available" | "insufficient_sample" | "unavailable";
+  medianTalkSeconds: number | null;
+  p90TalkSeconds: number | null;
+  afterHours: { inboundCalls: number; answered: number; missed: number };
+};
+
+// Rolling-window detail behind the simple "today" tiles on the Call
+// Activity page — median/P90 (not just average) answer and talk time,
+// plus after-hours volume tracked as its own honest bucket rather than
+// silently dropped. After-hours calls are excluded from every other
+// number here (ring/talk time, answer rate) for the same reason
+// isBusinessHours exists everywhere else in this app: nobody was ever
+// meant to answer them, so folding them in would misrepresent both the
+// after-hours bucket and the business-hours one.
+export async function getPhoneAnalyticsDetail(directory: ContactDirectory | null): Promise<PhoneAnalyticsDetail> {
+  const windowStart = new Date(Date.now() - ANALYTICS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  const rawCalls = await prisma.callRecord.findMany({
+    where: { startAt: { gte: windowStart } },
+    select: { startAt: true, missed: true, direction: true, durationSeconds: true, answeredAt: true, internalExtension: true },
+  });
+  // excludeFalseMisses applied before the business/after-hours split, not
+  // after — a queue-abandon or simultaneous-ring duplicate is just as
+  // false a "miss" at 9pm as it is at 9am.
+  const calls = excludeFalseMisses(rawCalls, directory);
+  const businessCalls = calls.filter((c) => isBusinessHours(c.startAt));
+  const afterHoursCalls = calls.filter((c) => !isBusinessHours(c.startAt));
+
+  const inbound = businessCalls.filter((c) => c.direction === "Inbound");
+  const outbound = businessCalls.filter((c) => c.direction === "Outbound");
+  const answeredInbound = inbound.filter((c) => !c.missed);
+  const missedInbound = inbound.filter((c) => c.missed);
+
+  const ringSamples = answeredInbound
+    .filter((c) => c.answeredAt)
+    .map((c) => Math.round((c.answeredAt!.getTime() - c.startAt.getTime()) / 1000))
+    .filter((s) => s >= 0);
+  const talkSamples = businessCalls.filter((c) => !c.missed).map((c) => c.durationSeconds);
+
+  const afterHoursInbound = afterHoursCalls.filter((c) => c.direction === "Inbound");
+
+  return {
+    windowDays: ANALYTICS_WINDOW_DAYS,
+    inboundCalls: inbound.length,
+    outboundCalls: outbound.length,
+    answeredInbound: answeredInbound.length,
+    missedInbound: missedInbound.length,
+    answerRatePct: inbound.length > 0 ? Math.round((answeredInbound.length / inbound.length) * 1000) / 10 : null,
+    ringTimeStatus: ringSamples.length === 0 ? "unavailable" : ringSamples.length < MIN_PERCENTILE_SAMPLE ? "insufficient_sample" : "available",
+    medianRingSeconds: median(ringSamples),
+    p90RingSeconds: percentile90(ringSamples),
+    talkTimeStatus: talkSamples.length === 0 ? "unavailable" : talkSamples.length < MIN_PERCENTILE_SAMPLE ? "insufficient_sample" : "available",
+    medianTalkSeconds: median(talkSamples),
+    p90TalkSeconds: percentile90(talkSamples),
+    afterHours: {
+      inboundCalls: afterHoursInbound.length,
+      answered: afterHoursInbound.filter((c) => !c.missed).length,
+      missed: afterHoursInbound.filter((c) => c.missed).length,
+    },
+  };
+}
+
+export type ClientCallVolume = { companyName: string; calls: number; missed: number };
+export type CallsPerClient = { topClients: ClientCallVolume[]; unresolvedCalls: number; windowDays: number };
+
+// Numbers that don't resolve to a known company (directory.phoneToCompany
+// — see contactDirectory.ts) are counted, not silently dropped or
+// guessed at — see unresolvedCalls.
+export async function getCallsPerClient(directory: ContactDirectory | null, limit = 8): Promise<CallsPerClient> {
+  const windowStart = new Date(Date.now() - ANALYTICS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  const rawCalls = await prisma.callRecord.findMany({
+    where: { startAt: { gte: windowStart } },
+    select: { startAt: true, missed: true, direction: true, externalNumber: true, internalExtension: true },
+  });
+  const calls = excludeFalseMisses(rawCalls.filter((c) => isBusinessHours(c.startAt)), directory);
+
+  const byCompany = new Map<string, ClientCallVolume>();
+  let unresolvedCalls = 0;
+  for (const c of calls) {
+    const company = c.externalNumber ? directory?.phoneToCompany.get(c.externalNumber) : undefined;
+    if (!company) {
+      unresolvedCalls++;
+      continue;
+    }
+    const entry = byCompany.get(company) ?? { companyName: company, calls: 0, missed: 0 };
+    entry.calls++;
+    if (c.missed && c.direction === "Inbound") entry.missed++;
+    byCompany.set(company, entry);
+  }
+
+  const topClients = [...byCompany.values()].sort((a, b) => b.calls - a.calls).slice(0, limit);
+  return { topClients, unresolvedCalls, windowDays: ANALYTICS_WINDOW_DAYS };
 }
