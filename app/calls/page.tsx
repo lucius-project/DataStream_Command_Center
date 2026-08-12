@@ -1,8 +1,14 @@
 import { syncCallActivity } from "@/lib/integrations/unitedCloud";
-import { getHaloDirectory } from "@/lib/integrations/haloDirectory";
-import { getRecentCalls, getCallActivitySummary, attachCompanyNames } from "@/lib/services/callActivity";
+import { getContactDirectory } from "@/lib/integrations/contactDirectory";
+import {
+  getRecentCalls,
+  getCallActivitySummary,
+  getCallStatsByTechToday,
+  attachCompanyNames,
+} from "@/lib/services/callActivity";
 import { getUnitedCloudCredentialStatus } from "@/lib/services/integrations";
 import { CallRow } from "@/components/calls/CallRow";
+import { TechCallSummary } from "@/components/calls/TechCallSummary";
 
 export default async function CallActivityPage() {
   const sync = await syncCallActivity();
@@ -10,14 +16,16 @@ export default async function CallActivityPage() {
     getRecentCalls(),
     getCallActivitySummary(),
     getUnitedCloudCredentialStatus(),
-    // Company lookup is a separate HaloPSA read from the call sync above —
-    // a failure here (HaloPSA down, not connected) shouldn't block the
-    // calls themselves from showing, just leave companyName unresolved.
-    getHaloDirectory()
+    // Directory lookup (company names via HaloPSA, tech names via United
+    // Cloud) is separate from the call sync above — a failure here
+    // shouldn't block the calls themselves from showing, just leave
+    // companyName/answeredBy unresolved.
+    getContactDirectory()
       .then((directory) => ({ directory, error: undefined as string | undefined }))
-      .catch((err) => ({ directory: null, error: err instanceof Error ? err.message : "HaloPSA lookup failed." })),
+      .catch((err) => ({ directory: null, error: err instanceof Error ? err.message : "Directory lookup failed." })),
   ]);
   const calls = attachCompanyNames(rawCalls, directoryResult.directory);
+  const techStats = await getCallStatsByTechToday(directoryResult.directory);
 
   return (
     <div className="mx-auto max-w-2xl p-4 md:p-6">
@@ -34,7 +42,7 @@ export default async function CallActivityPage() {
 
       {directoryResult.error && (
         <div className="mt-4 rounded-md border border-status-warn/40 bg-status-warn-dim px-4 py-3 text-sm text-status-warn">
-          Company lookup failed, showing numbers instead: {directoryResult.error}
+          Company/tech lookup failed, showing numbers instead: {directoryResult.error}
         </div>
       )}
 
@@ -58,8 +66,16 @@ export default async function CallActivityPage() {
             </div>
             <div className="font-data text-[11px] text-text-faint">avg duration today</div>
           </div>
+          <div>
+            <div className="font-display text-xl font-semibold text-text">
+              {summary.avgRingSeconds !== null ? `${summary.avgRingSeconds}s` : "—"}
+            </div>
+            <div className="font-data text-[11px] text-text-faint">avg ring today</div>
+          </div>
         </div>
       )}
+
+      {calls.length > 0 && <TechCallSummary stats={techStats} />}
 
       <div className="mt-6 flex flex-col gap-2">
         {calls.map((call) => (

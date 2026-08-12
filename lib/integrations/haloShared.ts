@@ -33,6 +33,27 @@ export function mapHaloDate(raw: RawHaloRecord, keys: string[]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+// For fields where only the calendar date is meaningful and the time
+// portion is an unrelated artifact — confirmed live on /api/Timesheet's
+// "date" field, which arrives as e.g. "2026-08-05T05:32:44.99+00:00"
+// (a fixed ~05:32 UTC timestamp, not midnight). Parsing that with `new
+// Date()` and reading local getters shifts the day backward for any
+// Pacific-negative-UTC-offset instance (05:32 UTC = previous day
+// evening in Pacific time) — confirmed: "2026-08-05T05:32...+00:00"
+// resolves to Aug 4 in local time, silently bucketing a whole day's
+// timesheet hours onto the wrong day. This extracts the YYYY-MM-DD
+// prefix directly and builds a *local* midnight Date from those
+// components, so the calendar date HaloPSA actually means is preserved
+// regardless of what time-of-day or UTC offset rides along with it.
+export function mapHaloDateOnly(raw: RawHaloRecord, keys: string[]): Date | null {
+  const value = firstString(raw, keys);
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day));
+}
+
 // HaloPSA action records identify the agent by free-text name (varies by
 // instance), not a stable ID mapped to our known tech list — so matching
 // is substring-based against KNOWN_TECHS. Shared by weekly (Team Time
@@ -202,4 +223,22 @@ export async function fetchHaloStatusNames(instanceUrl: string, accessToken: str
     if (id !== undefined && name) names.set(id, name);
   }
   return names;
+}
+
+// Ground truth for "hours actually logged," per agent per day — HaloPSA's
+// own Timesheet feature (target_hours/actual_hours/unlogged_hours),
+// confirmed live as a real endpoint (200 on both /api/Timesheet and
+// /api/TimeSheet — same data, case-insensitive route). This replaced an
+// earlier approach that summed ticket Actions' timetaken instead: that
+// undercounted badly, because most Actions' timetaken is a tiny
+// system-computed duration between ticket status transitions (open →
+// triage → resolved, often under a minute each), not the deliberate time
+// entry a tech logs against their day — confirmed against a real tech's
+// numbers, off by roughly 5x. This endpoint reports what a human looking
+// at the actual Timesheet/Timecard screen in HaloPSA would see. No
+// date-range query params observed or needed — the instance returns a
+// rolling window around today; callers filter to whatever range they need.
+export async function fetchHaloTimesheet(instanceUrl: string, accessToken: string): Promise<RawHaloRecord[]> {
+  const data = await haloGet(instanceUrl, accessToken, "/api/Timesheet");
+  return unwrapList(data, "timesheet");
 }

@@ -10,6 +10,8 @@
 
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/crypto";
+import { KNOWN_TECHS, type Tech } from "./halopsa";
+import { matchKnownTech, withComputeThrottle, HOURS_THROTTLE_MS } from "./haloShared";
 
 type RawCdr = Record<string, unknown>;
 
@@ -65,7 +67,7 @@ function mapDirection(raw: RawCdr): string {
 
 // The external party's number, normalized to the last 10 digits (NANP) —
 // used to cross-reference against HaloPSA contact phone numbers in
-// haloDirectory.ts. Inbound CDRs carry it as a SIP URI
+// contactDirectory.ts. Inbound CDRs carry it as a SIP URI
 // ("sip:+12507330906@15.222.191.147") — naively stripping non-digits from
 // the whole string would pull digits out of the IP address too, so this
 // isolates the user-info portion (before "@") first. Outbound CDRs carry
@@ -81,8 +83,9 @@ function extractExternalNumber(value: string | number | undefined): string | nul
 }
 
 // The internal extension that handled the call — short (2-4 digit)
-// numeric string, used to cross-reference against HaloPSA agent
-// extension numbers in haloDirectory.ts. For a call routed through a
+// numeric string, used to cross-reference against United Cloud's own
+// extension directory in contactDirectory.ts (fetchExtensionDirectory,
+// below). For a call routed through a
 // hunt group this may be the group's own pseudo-extension rather than an
 // individual's — that's fine, it just won't match any agent and the call
 // stays unattributed instead of being guessed.
@@ -194,4 +197,46 @@ export async function syncCallActivity(): Promise<{ synced: number; error?: stri
     console.error("United Cloud call activity sync failed:", err);
     return { synced: 0, error: message };
   }
+}
+
+// Extension -> tech, sourced from United Cloud's own /domains/{domain}/users
+// directory rather than HaloPSA's agent list. Confirmed live: this endpoint
+// carries name-first-name/name-last-name per extension directly from the
+// phone system, so it's the more authoritative source for "who sits at
+// this extension" than HaloPSA (whose agent records turned out to be
+// missing extensionnumber for some techs — see haloShared.ts's
+// matchKnownTech usage elsewhere). Non-person extensions (voicemail boxes,
+// queues, conference bridges, TOD routes) simply won't substring-match
+// any KNOWN_TECHS name and are silently skipped, not guessed.
+async function fetchExtensionDirectory(): Promise<Map<string, Tech>> {
+  const map = new Map<string, Tech>();
+  const credential = await prisma.unitedCloudCredential.findUnique({ where: { id: "unitedcloud" } });
+  if (!credential) return map;
+
+  const apiKey = decryptToken(credential.encryptedApiKey);
+  const base = normalizeBaseUrl(credential.apiBaseUrl);
+  const res = await fetch(`${base}/domains/${encodeURIComponent(credential.domain)}/users`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`United Cloud users request failed (${res.status}): ${body.slice(0, 300)}`);
+  }
+
+  const users = (await res.json()) as Record<string, unknown>[];
+  for (const user of users) {
+    const extension = firstString(user, ["user"]);
+    const firstName = firstString(user, ["name-first-name"]);
+    const lastName = firstString(user, ["name-last-name"]);
+    if (!extension || !firstName) continue;
+    const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+    const tech = matchKnownTech(fullName, KNOWN_TECHS);
+    if (tech) map.set(extension, tech);
+  }
+
+  return map;
+}
+
+export async function getUnitedCloudExtensionDirectory(): Promise<Map<string, Tech>> {
+  return withComputeThrottle("unitedCloudExtensionDirectory", HOURS_THROTTLE_MS, fetchExtensionDirectory);
 }

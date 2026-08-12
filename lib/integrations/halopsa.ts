@@ -19,11 +19,10 @@ import {
   firstString,
   firstNumber,
   mapHaloDate,
-  fetchHaloActionsForTicket,
+  mapHaloDateOnly,
   fetchHaloAgentNames,
   fetchHaloStatusNames,
-  fetchHaloTicketHistory,
-  mapWithConcurrency,
+  fetchHaloTimesheet,
   matchKnownTech,
   withComputeThrottle,
   HOURS_THROTTLE_MS,
@@ -265,66 +264,89 @@ export async function syncTicketsFromHalo(): Promise<{ synced: number; error?: s
 // seeded fixture rows already cover the disconnected case)
 // ---------------------------------------------------------------------------
 
-// Sums this week's Actions by agent name, matched against the four known
-// techs (best-effort substring match — HaloPSA's agent field name and
-// exact formatting haven't been confirmed against a real response yet).
-//
-// /api/Actions has no global/date-filtered query (confirmed: it returns
-// record_count: 0 unless scoped to a ticket_id), so this fetches per
-// ticket rather than once — same underlying cause as Client
-// Profitability's hours computation in haloClients.ts.
-//
-// Scoped to tickets *touched* this week (open or closed), not
-// prisma.ticketSnapshot (open tickets only) — confirmed against real data
-// that most tickets close within days, so an open-only scan silently
-// drops most of the week's actually-logged hours (verified: 64% of
-// tickets touched in a given week were already closed, undercounting one
-// tech's hours by ~70%). fetchHaloTicketHistory's ~1000-row cap covers
-// several weeks, so filtering to "touched this week" is a small subset of
-// it, not a fresh fan-out risk.
+function dayKey(date: Date): string {
+  return date.toISOString();
+}
+
+// Monday-Friday of the current business week (see lib/dateUtils.ts) as
+// midnight-normalized Date objects — the fixed set of keys DailyHours
+// always writes a row for, same "every known tech/period gets a row,
+// even a zero one" pattern TimeGap already uses.
+function weekdayDates(): Date[] {
+  const start = startOfWeek();
+  return Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
+  });
+}
+
+type WeeklyHours = {
+  weekly: Map<Tech, number>;
+  // tech -> ISO day key -> hours, Monday-Friday only.
+  daily: Map<Tech, Map<string, number>>;
+};
+
+// Sums HaloPSA's own Timesheet rows (actual_hours) by agent name, matched
+// against the four known techs — see fetchHaloTimesheet's comment in
+// haloShared.ts for why this replaced summing ticket Actions. One call,
+// no per-ticket fan-out, unlike the old approach (or Client
+// Profitability's hoursThisMonth in haloClients.ts, which still has to
+// fan out since it's asking a different question — hours *per client*,
+// which Timesheet rows don't carry).
 async function computeWeeklyHoursByTech(
   instanceUrl: string,
   accessToken: string,
-): Promise<Map<Tech, number>> {
+): Promise<WeeklyHours> {
   const weekStart = startOfWeek();
-  const allTickets = await fetchHaloTicketHistory(instanceUrl, accessToken);
-  const ticketIds = allTickets
-    .filter((t) => {
-      const lastTouched = mapHaloDate(t, ["last_update", "lastactiondate", "dateoccurred"]);
-      return lastTouched !== null && lastTouched >= weekStart;
-    })
-    .map((t) => firstString(t, ["id", "ticket_id"]))
-    .filter((id): id is string => Boolean(id));
-
-  const actionsPerTicket = await mapWithConcurrency(ticketIds, 5, (id) =>
-    fetchHaloActionsForTicket(instanceUrl, accessToken, id),
-  );
-  const rawActions = actionsPerTicket.flat();
-  if (rawActions.length > 0) {
-    console.log("HaloPSA raw action sample (first result, for field-mapping reference):", JSON.stringify(rawActions[0]));
+  const weekEnd = endOfWeek();
+  const rows = await fetchHaloTimesheet(instanceUrl, accessToken);
+  if (rows.length > 0) {
+    console.log("HaloPSA raw timesheet sample (first result, for field-mapping reference):", JSON.stringify(rows[0]));
   }
 
   const rawHoursByTech = new Map<Tech, number>();
+  const rawDailyByTech = new Map<Tech, Map<string, number>>();
 
-  for (const raw of rawActions) {
-    const actionDate = mapHaloDate(raw, ["datetime", "actiondate", "date"]);
-    if (actionDate && actionDate < weekStart) continue;
-    const agentName = firstString(raw, ["agent", "who", "staff", "assignedto", "agentname"]);
-    // timetaken is already in hours (confirmed against real data — values
-    // like 1.75 = 1h45m, clean quarter-hour increments, not a minutes count).
-    const hours = firstNumber(raw, ["timetaken", "actiontime", "time_taken"]) ?? 0;
+  for (const raw of rows) {
+    // mapHaloDateOnly, not mapHaloDate — see its comment in haloShared.ts.
+    // This field's time-of-day is an artifact, not the tech's actual
+    // clock-in time, and converting it through local-timezone getters
+    // shifts the calendar date backward on this (UTC-negative-offset)
+    // instance.
+    const date = mapHaloDateOnly(raw, ["date"]);
+    if (!date || date < weekStart || date > weekEnd) continue;
+
+    const agentName = firstString(raw, ["agent_name"]);
+    const hours = firstNumber(raw, ["actual_hours"]) ?? 0;
     if (!agentName || hours <= 0) continue;
 
     const matched = matchKnownTech(agentName, KNOWN_TECHS);
     if (!matched) continue;
+
     rawHoursByTech.set(matched, (rawHoursByTech.get(matched) ?? 0) + hours);
+
+    const key = dayKey(date);
+    const dayMap = rawDailyByTech.get(matched) ?? new Map<string, number>();
+    dayMap.set(key, (dayMap.get(key) ?? 0) + hours);
+    rawDailyByTech.set(matched, dayMap);
   }
 
   const hoursByTech = new Map<Tech, number>();
   for (const [tech, hours] of rawHoursByTech) {
     hoursByTech.set(tech, Math.round(hours * 10) / 10);
   }
-  return hoursByTech;
+
+  const dailyByTech = new Map<Tech, Map<string, number>>();
+  for (const [tech, dayMap] of rawDailyByTech) {
+    const rounded = new Map<string, number>();
+    for (const [key, hours] of dayMap) {
+      rounded.set(key, Math.round(hours * 10) / 10);
+    }
+    dailyByTech.set(tech, rounded);
+  }
+
+  return { weekly: hoursByTech, daily: dailyByTech };
 }
 
 const EXPECTED_WEEKLY_HOURS = 40;
@@ -340,7 +362,7 @@ export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: stri
   try {
     const clientSecret = decryptToken(credential.encryptedClientSecret);
     const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
-    const hoursByTech = await withComputeThrottle(
+    const { weekly: hoursByTech, daily: dailyByTech } = await withComputeThrottle(
       "weeklyHoursByTech",
       HOURS_THROTTLE_MS,
       () => computeWeeklyHoursByTech(credential.instanceUrl, accessToken),
@@ -348,6 +370,7 @@ export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: stri
 
     const periodStart = startOfWeek();
     const periodEnd = endOfWeek();
+    const days = weekdayDates();
 
     for (const person of KNOWN_TECHS) {
       const loggedHours = hoursByTech.get(person) ?? 0;
@@ -356,6 +379,16 @@ export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: stri
         update: { loggedHours, periodEnd },
         create: { person, role: "TECH", expectedHours: EXPECTED_WEEKLY_HOURS, loggedHours, periodStart, periodEnd },
       });
+
+      const dayMap = dailyByTech.get(person);
+      for (const date of days) {
+        const hours = dayMap?.get(dayKey(date)) ?? 0;
+        await prisma.dailyHours.upsert({
+          where: { person_date: { person, date } },
+          update: { hours },
+          create: { person, date, hours },
+        });
+      }
     }
 
     return { synced: KNOWN_TECHS.length };

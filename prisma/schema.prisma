@@ -278,6 +278,53 @@ model TimeGap {
   @@index([person])
 }
 
+// Per-day breakdown of TimeGap's weekly loggedHours total — same source
+// (HaloPSA Actions, computed in computeWeeklyHoursByTech) bucketed by day
+// instead of summed for the whole week. Persisted (not computed live at
+// read time) for the same reason TimeGap is: the Actions fan-out is
+// expensive and throttled, so the sync writes both the weekly total and
+// the daily buckets in one pass rather than re-deriving one from the
+// other on every page load. date is midnight-normalized, Mon-Fri only
+// (see lib/dateUtils.ts's business-week convention) — TECH role only,
+// no admin/billing equivalent requested yet.
+model DailyHours {
+  id        String   @id @default(cuid())
+  person    String
+  date      DateTime
+  hours     Float
+  updatedAt DateTime @updatedAt
+
+  @@unique([person, date])
+  @@index([person])
+}
+
+// Weekly snapshot of each tech's P1/aging/open/on-hold ticket counts —
+// unlike TicketSnapshot (always current/live state, overwritten on every
+// HaloPSA sync), this is a point-in-time record kept every week so a
+// later week can show a real "vs last week" trend for Ticket Health
+// (see TechOrgLastWeek in techPerformance.ts). No external API call
+// involved in populating this — it's a snapshot of getLoadPerTech()'s
+// own output (already derived from the already-synced TicketSnapshot
+// table), so writing it is cheap enough to do on every page load, same
+// cost profile as TimeGap/DailyHours. Builds up honestly from whenever
+// this shipped forward — no backfilled history, same "label by the
+// actual window, don't fake depth" approach as Client Profitability's
+// rolling average.
+model TicketLoadWeekly {
+  id          String   @id @default(cuid())
+  person      String
+  periodStart DateTime
+  periodEnd   DateTime
+  openCount   Int
+  p1Count     Int
+  agingCount  Int
+  onHoldCount Int
+  updatedAt   DateTime @updatedAt
+
+  @@unique([person, periodStart])
+  @@index([person])
+}
+
 // ---------------------------------------------------------------------------
 // Shared delegation log (Inbox Command + Operations)
 // ---------------------------------------------------------------------------
@@ -491,9 +538,10 @@ model CallRecord {
   // hunt-group call this may be the group's own pseudo-extension, not an
   // individual's. Both are null when the source field wasn't present.
   // Resolving these to a company name / tech name is done live at read
-  // time (see lib/integrations/haloDirectory.ts) against HaloPSA contacts
-  // and agents, not baked in here — that mapping can change independently
-  // of call history.
+  // time (see lib/integrations/contactDirectory.ts) — company name against
+  // HaloPSA contacts, tech name against United Cloud's own extension
+  // directory — not baked in here, since that mapping can change
+  // independently of call history.
   externalNumber    String?
   internalExtension String?
   startAt           DateTime

@@ -16,19 +16,42 @@ export async function getDispatchTickets() {
   });
 }
 
-export type TechLoad = { tech: string; openCount: number; p1Count: number; agingCount: number };
+export type TechLoad = { tech: string; openCount: number; p1Count: number; agingCount: number; onHoldCount: number };
+
+// TicketSnapshot only ever holds tickets HaloPSA itself calls open
+// (fetchHaloTickets uses open_only=true — see halopsa.ts), so anything
+// outside OPEN_STATUSES here isn't closed, it's blocked on something else
+// ("On Hold", "Waiting on Vendor", "Waiting on Parts", "Scheduled", etc.,
+// confirmed live). Counted separately rather than folded into openCount:
+// those tickets aren't sitting in a tech's active queue waiting on them,
+// so mixing them in would overstate workload and misrepresent responsiveness.
+async function getOnHoldTickets() {
+  return prisma.ticketSnapshot.findMany({
+    where: { status: { notIn: OPEN_STATUSES } },
+    select: { assignedTech: true },
+  });
+}
 
 export async function getLoadPerTech(): Promise<TechLoad[]> {
-  const tickets = await getDispatchTickets();
+  const [tickets, onHoldTickets] = await Promise.all([getDispatchTickets(), getOnHoldTickets()]);
   const now = Date.now();
   const byTech = new Map<string, TechLoad>();
+  const entryFor = (tech: string) =>
+    byTech.get(tech) ?? { tech, openCount: 0, p1Count: 0, agingCount: 0, onHoldCount: 0 };
+
   for (const t of tickets) {
-    const entry = byTech.get(t.assignedTech) ?? { tech: t.assignedTech, openCount: 0, p1Count: 0, agingCount: 0 };
+    const entry = entryFor(t.assignedTech);
     entry.openCount++;
     if (t.priority === "P1") entry.p1Count++;
     if (now - t.openedAt.getTime() > 24 * 60 * 60 * 1000) entry.agingCount++;
     byTech.set(t.assignedTech, entry);
   }
+  for (const t of onHoldTickets) {
+    const entry = entryFor(t.assignedTech);
+    entry.onHoldCount++;
+    byTech.set(t.assignedTech, entry);
+  }
+
   return Array.from(byTech.values()).sort((a, b) => b.openCount - a.openCount);
 }
 

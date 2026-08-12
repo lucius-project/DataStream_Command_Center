@@ -13,12 +13,27 @@
 
 import { prisma } from "@/lib/prisma";
 import { bandHigherIsBetter, bandLowerIsBetter, type KpiStatus } from "@/lib/kpiStatus";
+import { weekFractionElapsed } from "@/lib/dateUtils";
 import { getDispatchTickets, getLoadPerTech, getTimeGaps } from "@/lib/services/operations";
 import { getDeviceHealthSummary } from "@/lib/services/deviceHealth";
 import { getCallActivitySummary } from "@/lib/services/callActivity";
 import { getNinjaRmmConnectionInfo, getUnitedCloudCredentialStatus } from "@/lib/services/integrations";
 import { ATTENTION_TYPE_RANK } from "@/lib/services/commandFlow";
 import type { AttentionType } from "@/app/generated/prisma/client";
+
+// Optional week-over-week comparison — omitted entirely (not a zeroed
+// object) when there's no honest prior-period figure to compare against
+// yet, e.g. Tech Performance's Ticket Health KPI has nothing to diff
+// against for its very first week after TicketLoadWeekly started being
+// recorded (see techPerformance.ts) — every week after that has real
+// history to compare, so it simply doesn't set this until then rather
+// than fabricating a flat trend. `goodDirection` lets the tile color the
+// arrow correctly for metrics where "up" is bad (e.g. avg pickup time).
+export type KpiTrend = {
+  direction: "up" | "down" | "flat";
+  changeLabel: string;
+  goodDirection: "up" | "down";
+};
 
 export type Kpi = {
   key: string;
@@ -29,6 +44,7 @@ export type Kpi = {
   detail: string;
   benchmark: string;
   href: string;
+  trend?: KpiTrend;
 };
 
 export type ActionItem = {
@@ -57,16 +73,6 @@ export type BusinessHealthSnapshot = {
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
-}
-
-// Business days elapsed this week (Mon-Fri), today counted as a full day —
-// keeps the utilization denominator from reading as a false "red" every
-// Monday morning. Weekends clamp to the full 5-day week.
-function weekFractionElapsed(): number {
-  const now = new Date();
-  const day = now.getDay(); // 0 = Sun, 1 = Mon, ... 6 = Sat
-  const businessDay = day === 0 ? 5 : day === 6 ? 5 : day; // Mon=1..Fri=5, weekend=5
-  return businessDay / 5;
 }
 
 // ---------------------------------------------------------------------------
