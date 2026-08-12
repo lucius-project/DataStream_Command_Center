@@ -4,6 +4,18 @@ import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import { getTechPerformance, getTechOrgKpis, syncTicketLoadHistory } from "@/lib/services/techPerformance";
 import { getServiceDeskHealthSnapshot, getSlaAtRiskTickets } from "@/lib/services/serviceDeskHealth";
 import { generateManagerAlerts } from "@/lib/services/managerAlerts";
+import { getStaleTickets } from "@/lib/services/operations";
+import {
+  getTechServiceMetrics,
+  getTicketsByTech,
+  bucketStaleTicketsByTech,
+  buildTechCardTicketData,
+  computeTechPerformanceScore,
+  roleFor,
+  serviceMetricsFor,
+  ticketsFor,
+  staleTicketsFor,
+} from "@/lib/services/techPerformanceScore";
 import { TechPerformanceRow } from "@/components/tech-performance/TechPerformanceRow";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
 import { OrgKpiStrip } from "@/components/tech-performance/OrgKpiStrip";
@@ -30,6 +42,14 @@ export default async function TechPerformancePage() {
   ]);
   const { techs, org, todayIndex, lastWeek } = await getTechPerformance(directory);
   const orgKpis = getTechOrgKpis(techs, org, lastWeek);
+
+  // Fetched once here and reused by both the per-tech Performance Score
+  // (Service Delivery/Work Management categories) and each card's own
+  // stale/ticket drill-downs — same DB-only, no-extra-HaloPSA-calls
+  // discipline as the rest of this page.
+  const [staleTickets, ticketsByTech] = await Promise.all([getStaleTickets(), getTicketsByTech()]);
+  const staleByTech = bucketStaleTicketsByTech(staleTickets);
+  const serviceMetricsByTech = await getTechServiceMetrics(staleTickets);
   // Sum of each tech's own pro-rated expectedHoursToDate (techPerformance.ts)
   // rather than a second weekFraction computation here — one source of
   // truth for "how far into the week are we," reused rather than redone.
@@ -95,9 +115,27 @@ export default async function TechPerformancePage() {
       </div>
 
       <div className="mt-3 flex flex-col gap-2">
-        {techs.map((tech) => (
-          <TechPerformanceRow key={tech.person} tech={tech} todayIndex={todayIndex} />
-        ))}
+        {techs.map((tech) => {
+          const role = roleFor(tech.person);
+          const serviceMetrics = serviceMetricsFor(serviceMetricsByTech, tech.person);
+          const scoreResult = computeTechPerformanceScore(tech, serviceMetrics, role);
+          const cardData = buildTechCardTicketData(
+            ticketsFor(ticketsByTech, tech.person),
+            staleTicketsFor(staleByTech, tech.person),
+            serviceMetrics,
+          );
+          return (
+            <TechPerformanceRow
+              key={tech.person}
+              tech={tech}
+              todayIndex={todayIndex}
+              role={role}
+              scoreResult={scoreResult}
+              serviceMetrics={serviceMetrics}
+              cardData={cardData}
+            />
+          );
+        })}
       </div>
     </div>
   );

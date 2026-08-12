@@ -42,7 +42,9 @@ export type SlaMetric = {
   medianHours: number | null;
 };
 
-function median(values: number[]): number | null {
+// Exported for reuse by techPerformanceScore.ts — same median logic,
+// one implementation.
+export function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -73,7 +75,17 @@ export async function getResponseSla(): Promise<SlaMetric> {
     if (t.respondedAt) {
       eligible++;
       if (t.respondedAt <= t.respondByAt) met++;
-      responseHours.push(businessHoursElapsed(t.openedAt, t.respondedAt));
+      // Some backlog tickets carry a respondedAt that predates their own
+      // openedAt (confirmed live — a HaloPSA data quirk on tickets that
+      // already existed before this app started tracking them, not
+      // something this app writes). businessHoursElapsed silently
+      // clamps that impossible ordering to 0, which would drag the
+      // median toward a false "instant response" signal — so those
+      // tickets are excluded from the median sample entirely rather
+      // than counted as a suspiciously perfect 0h. They still count
+      // toward met/eligible above, since the SLA met/miss verdict
+      // itself doesn't depend on openedAt.
+      if (t.respondedAt > t.openedAt) responseHours.push(businessHoursElapsed(t.openedAt, t.respondedAt));
     } else if (t.respondByAt < now) {
       // Target passed, still no response — a decided miss.
       eligible++;

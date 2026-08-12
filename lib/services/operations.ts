@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { startOfWeek, businessHoursElapsed } from "@/lib/dateUtils";
 import type { TicketSnapshot, AttentionType } from "@/app/generated/prisma/client";
 
-const OPEN_STATUSES = ["New", "In Progress", "Waiting on Customer"];
+export const OPEN_STATUSES = ["New", "In Progress", "Waiting on Customer"];
 const PRIORITY_ORDER = { P1: 0, P2: 1, P3: 2, P4: 3 } as const;
 
 export async function getDispatchTickets() {
