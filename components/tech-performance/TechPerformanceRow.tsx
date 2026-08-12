@@ -8,6 +8,7 @@ import type {
   TechSlaMetric,
   TechCardTicketData,
 } from "@/lib/services/techPerformanceScore";
+import type { TechRemoteSummary } from "@/lib/services/remoteSessions";
 import { Stat, GroupLabel, StatusPill, DailyHoursBars } from "./shared";
 import { DrilldownStat } from "./DrilldownStat";
 import { TechScoreBadge } from "./TechScoreBadge";
@@ -29,12 +30,9 @@ const PHONE_LOCKED = [
   { label: "Missed Calls", blockedBy: "The phone system rings the whole team at once — an unanswered call can't be attributed to one technician." },
   { label: "Answer %", blockedBy: "Same hunt-group limitation — see Missed Calls. Team-wide answer rate is on the KPI strip above." },
 ];
-const REMOTE_SUPPORT_LOCKED = [
-  { label: "Remote Sessions", blockedBy: "Deferred to Phase 8 (NinjaOne integration) per the implementation roadmap." },
-  { label: "Unique Remote Time", blockedBy: "Deferred to Phase 8 (NinjaOne integration) per the implementation roadmap." },
-  { label: "Remote Clients", blockedBy: "Deferred to Phase 8 (NinjaOne integration) per the implementation roadmap." },
-  { label: "Remote Devices", blockedBy: "Deferred to Phase 8 (NinjaOne integration) per the implementation roadmap." },
-];
+function minutesLabel(seconds: number): string {
+  return `${Math.round((seconds / 60) * 10) / 10}m`;
+}
 
 function Sparkline({ trend }: { trend: TechPerformance["trend"] }) {
   if (trend.length < 2) return null;
@@ -108,6 +106,7 @@ export function TechPerformanceRow({
   scoreResult,
   serviceMetrics,
   cardData,
+  remote,
 }: {
   tech: TechPerformance;
   todayIndex: number;
@@ -120,6 +119,7 @@ export function TechPerformanceRow({
   // since reading the current time directly inside a component body is
   // an impure operation the React Compiler's purity rule forbids.
   cardData: TechCardTicketData;
+  remote: TechRemoteSummary;
 }) {
   const sev = paceSeverity(tech.pacePct);
   const { priorityCounts } = cardData;
@@ -285,8 +285,28 @@ export function TechPerformanceRow({
           </div>
           <div className="mt-3">
             <GroupLabel>Remote Support</GroupLabel>
-            <div className="mt-1">
-              <LockedStrip locked={REMOTE_SUPPORT_LOCKED} />
+            <div className="mt-1 flex flex-col gap-0.5 font-data text-[11px]">
+              {remote.sessions === 0 && remote.failedSessions === 0 ? (
+                <span className="text-text-faint">No remote sessions tracked yet for {tech.person}.</span>
+              ) : (
+                <>
+                  <span className="flex flex-wrap gap-x-2.5">
+                    <Stat value={remote.sessions} label="sessions" />
+                    <Stat value={remote.uniqueDeviceIds.size} label="devices" />
+                    {remote.failedSessions > 0 && <Stat value={remote.failedSessions} label="failed" tone="warn" />}
+                  </span>
+                  <span className="flex flex-wrap gap-x-2.5">
+                    <Stat value={minutesLabel(remote.grossSeconds)} label="gross time" />
+                    <Stat value={minutesLabel(remote.uniqueSeconds)} label="unique time" />
+                  </span>
+                  {remote.durationStatus === "available" && (
+                    <span className="flex flex-wrap gap-x-2.5">
+                      <Stat value={minutesLabel(remote.medianDurationSeconds!)} label="median session" />
+                      <Stat value={minutesLabel(remote.p90DurationSeconds!)} label="P90 session" />
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

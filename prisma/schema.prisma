@@ -646,3 +646,56 @@ model NinjaDevice {
 
   @@index([offline])
 }
+
+// One row per NinjaOne Remote session, built by grouping /v2/activities
+// NINJA_REMOTE events sharing the same seriesUid — confirmed live: a
+// session's lifecycle is "Remote control session requested" -> "Session
+// started" -> "Session terminated" (or "Session failed to start" /
+// "Cancel Requested" instead of a normal finish), all three carrying the
+// identical seriesUid. durationSeconds comes straight from the
+// terminated event's own params.duration (NinjaOne's own computed
+// value, confirmed present) — not derived from endedAt-startedAt here,
+// per the spec's "do not assume, verify" standard for this integration.
+// ninjaDeviceId/ninjaUserId are raw NinjaOne IDs; device/org/tech names
+// are resolved at read time (NinjaDevice join + a live /v2/organizations
+// and /v2/users fetch, both small and unpersisted — same pattern
+// fetchNinjaOrganizations already uses) rather than denormalized here,
+// so a later rename doesn't leave this table stale.
+model RemoteSession {
+  id              String    @id @default(cuid())
+  seriesUid       String    @unique
+  ninjaDeviceId   String?
+  ninjaUserId     String?
+  requestedAt     DateTime?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationSeconds Int?
+  // "completed" (has a terminated event) | "failed" (Session failed to
+  // start) | "canceled" (Cancel Requested, never started) | "in_progress"
+  // (started, no terminate event seen yet) | "requested_only" (only a
+  // request event seen, nothing else — usually means the response page
+  // hasn't caught the next event yet, not a real outcome).
+  status          String
+  lastUpdatedAt   DateTime  @default(now())
+
+  @@index([startedAt])
+  @@index([ninjaDeviceId])
+}
+
+// Singleton cursor for the /v2/activities scan (see fetchRemoteActivities
+// in ninjaRmm.ts). Confirmed live: this account produces roughly 10,000
+// activities/day account-wide (~95% monitor/patch noise, not remote
+// sessions), so a full 30-day backward scan on every page load would
+// need hundreds of thousands of requests — not viable. Instead each sync
+// only pages back to the newest activity id already processed last time
+// (cheap — a handful of pages for a few minutes' gap), and the
+// RemoteSession table accumulates real depth over the app's actual
+// runtime, same "never fake depth, build it up honestly" pattern as
+// Call Answer Rate's monthly trend. The very first sync ever (no cursor
+// yet) is bounded by ACTIVITIES_SYNC_WINDOW_DAYS/ACTIVITIES_MAX_PAGES
+// instead, so history starts shallow rather than scanning unboundedly.
+model NinjaActivitySyncState {
+  id               String   @id @default("ninja-activities")
+  newestActivityId Int
+  updatedAt        DateTime @updatedAt
+}

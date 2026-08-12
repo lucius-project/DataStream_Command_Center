@@ -1,18 +1,21 @@
-import { syncDevices } from "@/lib/integrations/ninjaRmm";
+import { syncDevices, syncRemoteSessions } from "@/lib/integrations/ninjaRmm";
 import { getDevices, getDeviceHealthSummary } from "@/lib/services/deviceHealth";
+import { getRemoteSessionAnalytics } from "@/lib/services/remoteSessions";
 import { getNinjaRmmConnectionInfo } from "@/lib/services/integrations";
 import { DeviceRow } from "@/components/devices/DeviceRow";
+import { RemoteSupportPanel } from "@/components/devices/RemoteSupportPanel";
 
 export default async function DeviceHealthPage() {
-  const sync = await syncDevices();
-  const [devices, summary, connectionInfo] = await Promise.all([
+  const [sync, remoteSync] = await Promise.all([syncDevices(), syncRemoteSessions()]);
+  const [devices, summary, connectionInfo, remoteAnalytics] = await Promise.all([
     getDevices(),
     getDeviceHealthSummary(),
     getNinjaRmmConnectionInfo(),
+    getRemoteSessionAnalytics(),
   ]);
 
   return (
-    <div className="mx-auto max-w-2xl p-4 md:p-6">
+    <div className="mx-auto max-w-3xl p-4 md:p-6">
       <h1 className="font-display text-2xl font-semibold text-text">Device Health</h1>
       <p className="mt-1 text-sm text-text-muted">
         Managed devices from NinjaRMM, online status and last contact.
@@ -23,6 +26,14 @@ export default async function DeviceHealthPage() {
           NinjaRMM sync failed, showing the last synced data: {sync.error}
         </div>
       )}
+
+      {remoteSync.error && (
+        <div className="mt-4 rounded-md border border-status-warn/40 bg-status-warn-dim px-4 py-3 text-sm text-status-warn">
+          Remote session sync failed, showing the last synced data: {remoteSync.error}
+        </div>
+      )}
+
+      {devices.length > 0 && <RemoteSupportPanel analytics={remoteAnalytics} />}
 
       {devices.length > 0 && (
         <div className="mt-6 flex flex-wrap gap-4 rounded-lg border border-border bg-panel p-4">

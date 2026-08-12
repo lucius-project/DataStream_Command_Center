@@ -1,10 +1,13 @@
 import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halopsa";
 import { syncCallActivity } from "@/lib/integrations/unitedCloud";
+import { syncRemoteSessions } from "@/lib/integrations/ninjaRmm";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import { getTechPerformance, getTechOrgKpis, syncTicketLoadHistory } from "@/lib/services/techPerformance";
 import { getServiceDeskHealthSnapshot, getSlaAtRiskTickets } from "@/lib/services/serviceDeskHealth";
 import { generateManagerAlerts } from "@/lib/services/managerAlerts";
 import { getStaleTickets } from "@/lib/services/operations";
+import { getRemoteSessionAnalytics, type TechRemoteSummary } from "@/lib/services/remoteSessions";
+import type { Tech } from "@/lib/integrations/halopsa";
 import {
   getTechServiceMetrics,
   getTicketsByTech,
@@ -25,10 +28,11 @@ import { SlaAtRiskSection } from "@/components/service-desk/SlaAtRiskSection";
 import { ManagerActionQueue } from "@/components/service-desk/ManagerActionQueue";
 
 export default async function TechPerformancePage() {
-  const [ticketSync, timeGapSync, callSync] = await Promise.all([
+  const [ticketSync, timeGapSync, callSync, remoteSessionSync] = await Promise.all([
     syncTicketsFromHalo(),
     syncTeamTimeGaps(),
     syncCallActivity(),
+    syncRemoteSessions(),
   ]);
   // Run after syncTicketsFromHalo (not alongside it in the batch above)
   // so both this week's TicketLoadWeekly snapshot and the new Service
@@ -47,9 +51,14 @@ export default async function TechPerformancePage() {
   // (Service Delivery/Work Management categories) and each card's own
   // stale/ticket drill-downs — same DB-only, no-extra-HaloPSA-calls
   // discipline as the rest of this page.
-  const [staleTickets, ticketsByTech] = await Promise.all([getStaleTickets(), getTicketsByTech()]);
+  const [staleTickets, ticketsByTech, remoteAnalytics] = await Promise.all([
+    getStaleTickets(),
+    getTicketsByTech(),
+    getRemoteSessionAnalytics(),
+  ]);
   const staleByTech = bucketStaleTicketsByTech(staleTickets);
   const serviceMetricsByTech = await getTechServiceMetrics(staleTickets);
+  const remoteByTech = new Map<Tech, TechRemoteSummary>(remoteAnalytics.byTech.map((r) => [r.tech, r]));
   // Sum of each tech's own pro-rated expectedHoursToDate (techPerformance.ts)
   // rather than a second weekFraction computation here — one source of
   // truth for "how far into the week are we," reused rather than redone.
@@ -69,6 +78,7 @@ export default async function TechPerformancePage() {
     timeGapSync.error && `HaloPSA: ${timeGapSync.error}`,
     callSync.error && `United Cloud: ${callSync.error}`,
     ticketLoadSync.error && `Ticket load history: ${ticketLoadSync.error}`,
+    remoteSessionSync.error && `NinjaOne: ${remoteSessionSync.error}`,
   ].filter((e): e is string => Boolean(e));
 
   return (
@@ -124,6 +134,25 @@ export default async function TechPerformancePage() {
             staleTicketsFor(staleByTech, tech.person),
             serviceMetrics,
           );
+          // remoteByTech always has an entry for every KNOWN_TECHS member
+          // (see getRemoteSessionAnalytics), so this fallback only
+          // matters if the roster ever drifts out of sync — same
+          // defensive pattern as techPerformanceScore.ts's *For helpers.
+          const remote = remoteByTech.get(tech.person as Tech) ?? {
+            tech: tech.person as Tech,
+            techLabel: tech.person,
+            sessions: 0,
+            failedSessions: 0,
+            canceledSessions: 0,
+            grossSeconds: 0,
+            uniqueSeconds: 0,
+            durationStatus: "unavailable" as const,
+            medianDurationSeconds: null,
+            p90DurationSeconds: null,
+            businessHoursSessions: 0,
+            afterHoursSessions: 0,
+            uniqueDeviceIds: new Set<string>(),
+          };
           return (
             <TechPerformanceRow
               key={tech.person}
@@ -133,6 +162,7 @@ export default async function TechPerformancePage() {
               scoreResult={scoreResult}
               serviceMetrics={serviceMetrics}
               cardData={cardData}
+              remote={remote}
             />
           );
         })}
