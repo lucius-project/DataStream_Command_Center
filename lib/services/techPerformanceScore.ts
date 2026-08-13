@@ -64,7 +64,7 @@ export type TechRole =
 export const TECH_ROLES: Record<Tech, TechRole> = {
   Miguel: "Service Desk Technician",
   Cameron: "Service Desk Technician",
-  Darryl: "Service Desk Technician",
+  Darryll: "Service Desk Technician",
   Emily: "Service Desk Technician",
 };
 

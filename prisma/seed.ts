@@ -62,7 +62,7 @@ async function seedTimeGaps() {
   const rows: { person: string; role: "TECH" | "ADMIN"; expectedHours: number; loggedHours: number }[] = [
     { person: "Miguel", role: "TECH", expectedHours: 40, loggedHours: 41.5 },
     { person: "Cameron", role: "TECH", expectedHours: 40, loggedHours: 37.5 },
-    { person: "Darryl", role: "TECH", expectedHours: 40, loggedHours: 31 },
+    { person: "Darryll", role: "TECH", expectedHours: 40, loggedHours: 31 },
     { person: "Emily", role: "TECH", expectedHours: 40, loggedHours: 35.5 },
   ];
 

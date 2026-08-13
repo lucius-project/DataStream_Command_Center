@@ -32,8 +32,8 @@ import { startOfWeek, endOfWeek } from "@/lib/dateUtils";
 import { generateAttentionFlagsFromTickets } from "@/lib/services/operations";
 import type { TicketPriority } from "@/app/generated/prisma/client";
 
-export type Tech = "Miguel" | "Cameron" | "Darryl" | "Emily";
-export const KNOWN_TECHS: Tech[] = ["Miguel", "Cameron", "Darryl", "Emily"];
+export type Tech = "Miguel" | "Cameron" | "Darryll" | "Emily";
+export const KNOWN_TECHS: Tech[] = ["Miguel", "Cameron", "Darryll", "Emily"];
 
 function hoursAgo(hours: number): Date {
   return new Date(Date.now() - hours * 60 * 60 * 1000);
@@ -61,9 +61,9 @@ const MOCK_TICKETS: MockTicket[] = [
   { haloTicketId: "HALO-10238", summary: "Overnight backup job failing — Datto alert", status: "Waiting on Customer", priority: "P2", assignedTech: "Miguel", department: "Service Delivery", openedHoursAgo: 30, slaDueHours: -6 },
   { haloTicketId: "HALO-10232", summary: "VPN client not connecting for remote staff", status: "New", priority: "P2", assignedTech: "Cameron", department: "Service Delivery", openedHoursAgo: 0.5, slaDueHours: 7 },
   { haloTicketId: "HALO-10236", summary: "Email migration issue for new hire mailbox", status: "New", priority: "P2", assignedTech: "Cameron", department: "Service Delivery", openedHoursAgo: 4, slaDueHours: 4 },
-  { haloTicketId: "HALO-10243", summary: "AutoElevate approval queue backed up", status: "In Progress", priority: "P2", assignedTech: "Darryl", department: "Service Delivery", openedHoursAgo: 26, slaDueHours: 2 },
-  { haloTicketId: "HALO-10233", summary: "New user onboarding — laptop imaging and setup", status: "In Progress", priority: "P3", assignedTech: "Darryl", department: "Service Delivery", openedHoursAgo: 24, slaDueHours: 24 },
-  { haloTicketId: "HALO-10237", summary: "Wifi dropping intermittently — 2nd floor east wing", status: "In Progress", priority: "P3", assignedTech: "Darryl", department: "Service Delivery", openedHoursAgo: 6, slaDueHours: 18 },
+  { haloTicketId: "HALO-10243", summary: "AutoElevate approval queue backed up", status: "In Progress", priority: "P2", assignedTech: "Darryll", department: "Service Delivery", openedHoursAgo: 26, slaDueHours: 2 },
+  { haloTicketId: "HALO-10233", summary: "New user onboarding — laptop imaging and setup", status: "In Progress", priority: "P3", assignedTech: "Darryll", department: "Service Delivery", openedHoursAgo: 24, slaDueHours: 24 },
+  { haloTicketId: "HALO-10237", summary: "Wifi dropping intermittently — 2nd floor east wing", status: "In Progress", priority: "P3", assignedTech: "Darryll", department: "Service Delivery", openedHoursAgo: 6, slaDueHours: 18 },
   { haloTicketId: "HALO-10241", summary: "Firewall rule change request — new vendor SaaS", status: "New", priority: "P3", assignedTech: "Cameron", department: "Service Delivery", openedHoursAgo: 8, slaDueHours: 40 },
   { haloTicketId: "HALO-10244", summary: "DNSFilter category block causing false positive", status: "Waiting on Customer", priority: "P3", assignedTech: "Emily", department: "Service Delivery", openedHoursAgo: 20, slaDueHours: 20 },
   { haloTicketId: "HALO-10234", summary: "Printer offline in accounting", status: "Waiting on Customer", priority: "P4", assignedTech: "Emily", department: "Service Delivery", openedHoursAgo: 48, slaDueHours: 24 },

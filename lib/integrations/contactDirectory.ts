@@ -12,7 +12,7 @@
 //                       unitedCloud.ts). Originally this came from
 //                       HaloPSA's /api/Agent, but that instance's agent
 //                       records turned out to be missing extensionnumber
-//                       for some techs (confirmed: Darryl's extension, 103,
+//                       for some techs (confirmed: Darryll's extension, 103,
 //                       resolves fine in United Cloud but was blank in
 //                       HaloPSA) — the phone system itself is the more
 //                       authoritative source for "who sits at this
