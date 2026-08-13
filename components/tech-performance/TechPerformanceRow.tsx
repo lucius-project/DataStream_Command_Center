@@ -1,13 +1,14 @@
 import { AlertTriangle } from "lucide-react";
 import { paceSeverity, SEVERITY_FILL, SEVERITY_TEXT } from "@/lib/hoursSeverity";
 import type { TechPerformance } from "@/lib/services/techPerformance";
-import type {
-  TechRole,
-  TechPerformanceScoreResult,
-  TechServiceMetrics,
-  TechSlaMetric,
-  TechCardTicketData,
-  TechCardRow,
+import {
+  TECH_ROLE_LABELS,
+  type TechRole,
+  type TechPerformanceScoreResult,
+  type TechServiceMetrics,
+  type TechSlaMetric,
+  type TechCardTicketData,
+  type TechCardRow,
 } from "@/lib/services/techPerformanceScore";
 import type { TechRemoteSummary } from "@/lib/services/remoteSessions";
 import type { TechTimeCoverageSummary } from "@/lib/services/activityCorrelation";
@@ -155,7 +156,7 @@ export function TechPerformanceRow({
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
           <span className="font-display text-base font-medium text-text">{tech.person}</span>
-          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">{role}</span>
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">{TECH_ROLE_LABELS[role]}</span>
         </div>
         <div className="flex items-center gap-3">
           <Sparkline trend={tech.trend} />

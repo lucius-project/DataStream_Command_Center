@@ -15,6 +15,7 @@ import {
   Gauge,
   PhoneCall,
   MonitorCheck,
+  Settings,
 } from "lucide-react";
 
 export type NavItem = {
@@ -41,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboards", label: "Department Dashboards", icon: LayoutDashboard, status: "soon", group: "Growth" },
   { href: "/mindset", label: "Mindset & Fitness", icon: HeartPulse, status: "soon", group: "Personal" },
   { href: "/integrations", label: "Integrations", icon: Plug, status: "active", group: "System" },
+  { href: "/admin", label: "Admin Settings", icon: Settings, status: "active", group: "System" },
 ];
 
 export const NAV_GROUPS: NavItem["group"][] = ["Daily", "Runbooks", "Growth", "Personal", "System"];

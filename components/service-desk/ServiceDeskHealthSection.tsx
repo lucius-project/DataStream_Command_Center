@@ -2,10 +2,38 @@ import { KpiTile } from "@/components/business-health/KpiTile";
 import { LockedStrip } from "@/components/business-health/LockedStrip";
 import type { ServiceDeskHealthSnapshot } from "@/lib/services/serviceDeskHealth";
 import { getServiceDeskHealthKpis, getHealthScoreTrend } from "@/lib/services/serviceDeskHealth";
-import type { ServiceDeskHealthDaily } from "@/app/generated/prisma/client";
+import type { ServiceDeskHealthDaily, KpiSettings } from "@/app/generated/prisma/client";
 import { HealthScoreTile } from "./HealthScoreTile";
 import { NetTicketChangeTile } from "./NetTicketChangeTile";
 import { BacklogBreakdownPanel } from "./BacklogBreakdownPanel";
+import { InfoButton } from "@/components/shared/InfoButton";
+import { KPI_INFO_CONTENT } from "@/components/shared/kpiInfoContent";
+import type { Kpi } from "@/lib/services/businessHealth";
+
+// Wraps the shared KpiTile from the outside rather than modifying or
+// duplicating it — components/business-health/KpiTile.tsx is also used
+// by the separate Business Health page, which must stay untouched by
+// this info-icon feature. Same "icon is a true sibling of the tile's
+// main click target, not nested inside it" reasoning HealthScoreTile.tsx
+// already established, just applied from the consumer side instead of
+// inside the tile itself.
+function KpiTileWithInfo({ kpi }: { kpi: Kpi }) {
+  const info = KPI_INFO_CONTENT[kpi.key];
+  return (
+    <div className="group relative">
+      <KpiTile kpi={kpi} />
+      {info && (
+        <InfoButton
+          title={kpi.label}
+          what={info.what}
+          meaning={`Currently ${kpi.display} — ${kpi.detail}. ${kpi.benchmark}.`}
+          calculation={info.calculation}
+          className="absolute top-1.5 right-1.5"
+        />
+      )}
+    </div>
+  );
+}
 
 // Confirmed genuinely unavailable, not just unbuilt — see the Phase 1-3
 // discovery report. CSAT: HaloPSA's survey fields (surveyneeded/
@@ -26,14 +54,18 @@ const LOCKED_KPIS = [
 export function ServiceDeskHealthSection({
   snapshot,
   weekAgo,
+  settings,
 }: {
   snapshot: ServiceDeskHealthSnapshot;
   // ServiceDeskHealthDaily row from 7 days ago, or null before this
   // table has that much history yet (see its schema comment) — powers
   // every tile's "vs 7d ago" trend arrow, omitted (not faked) when null.
   weekAgo: ServiceDeskHealthDaily | null;
+  // Admin-editable sample-size/window/threshold values (Phase 12) —
+  // fetched once by the page and threaded down, same pattern as weekAgo.
+  settings: KpiSettings;
 }) {
-  const kpis = getServiceDeskHealthKpis(snapshot, weekAgo);
+  const kpis = getServiceDeskHealthKpis(snapshot, weekAgo, settings);
   const healthScoreTrend = getHealthScoreTrend(snapshot.healthScore, weekAgo);
 
   return (
@@ -48,13 +80,13 @@ export function ServiceDeskHealthSection({
           <NetTicketChangeTile net={snapshot.netTicketChange} />
         </div>
         {kpis.slice(0, 2).map((kpi) => (
-          <KpiTile key={kpi.key} kpi={kpi} />
+          <KpiTileWithInfo key={kpi.key} kpi={kpi} />
         ))}
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {kpis.slice(2).map((kpi) => (
-          <KpiTile key={kpi.key} kpi={kpi} />
+          <KpiTileWithInfo key={kpi.key} kpi={kpi} />
         ))}
         <div className="col-span-2">
           <BacklogBreakdownPanel backlog={snapshot.backlog} staleCount={snapshot.staleCount} />

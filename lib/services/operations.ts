@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { startOfWeek, businessHoursElapsed } from "@/lib/dateUtils";
 import type { TicketSnapshot, AttentionType } from "@/app/generated/prisma/client";
+import { getKpiSettings } from "./kpiSettings";
 
 export const OPEN_STATUSES = ["New", "In Progress", "Waiting on Customer"];
 const PRIORITY_ORDER = { P1: 0, P2: 1, P3: 2, P4: 3 } as const;
@@ -218,8 +219,6 @@ export async function getTechActionableTickets(): Promise<TicketSnapshot[]> {
   return tickets.filter((t) => classifyResponsibility(t.status) === "WAITING_TECHNICIAN");
 }
 
-const STALE_BUSINESS_HOURS = 24;
-
 export type StaleTicket = TicketSnapshot & { businessHoursSinceAction: number };
 
 // A tech-actionable ticket with no recorded update in >24 business hours.
@@ -232,12 +231,13 @@ export type StaleTicket = TicketSnapshot & { businessHoursSinceAction: number };
 // enough to run on every page load — not an exact "no technician touched
 // this" claim. Refining it to a true technician-action signal would need
 // the per-ticket Actions fetch, which stale detection deliberately avoids.
+// Threshold is admin-editable (Phase 12, KpiSettings.staleBusinessHours).
 export async function getStaleTickets(): Promise<StaleTicket[]> {
   const now = new Date();
-  const techActionable = await getTechActionableTickets();
+  const [techActionable, { staleBusinessHours }] = await Promise.all([getTechActionableTickets(), getKpiSettings()]);
   return techActionable
     .map((t) => ({ ...t, businessHoursSinceAction: businessHoursElapsed(t.lastActionAt ?? t.openedAt, now) }))
-    .filter((t) => t.businessHoursSinceAction > STALE_BUSINESS_HOURS)
+    .filter((t) => t.businessHoursSinceAction > staleBusinessHours)
     .sort((a, b) => b.businessHoursSinceAction - a.businessHoursSinceAction);
 }
 

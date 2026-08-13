@@ -18,8 +18,11 @@ import { matchKnownTech } from "@/lib/integrations/haloShared";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { fetchNinjaUsers, fetchNinjaOrganizations } from "@/lib/integrations/ninjaRmm";
 import { median, percentile90 } from "./stats";
+import { getKpiSettings } from "./kpiSettings";
 
-const MIN_PERCENTILE_SAMPLE = 5;
+// minPercentileSample is admin-editable (Phase 12,
+// KpiSettings.minPercentileSample) — was a module constant, duplicated
+// identically in callActivity.ts.
 
 // Exported for reuse by activityCorrelation.ts's Customer Interaction
 // Time (Phase 9) — this function is already source-agnostic (just
@@ -69,20 +72,23 @@ export type RemoteSessionAnalytics = {
   topClients: { organizationName: string; sessions: number; grossSeconds: number }[];
 };
 
-function finalizeSummary(raw: {
-  completedDurations: number[];
-  grossSeconds: number;
-  intervals: { start: Date; end: Date }[];
-  connected: number;
-  failed: number;
-  canceled: number;
-  businessHours: number;
-  afterHours: number;
-  deviceIds: Set<string>;
-}): RemoteSessionSummary {
+function finalizeSummary(
+  raw: {
+    completedDurations: number[];
+    grossSeconds: number;
+    intervals: { start: Date; end: Date }[];
+    connected: number;
+    failed: number;
+    canceled: number;
+    businessHours: number;
+    afterHours: number;
+    deviceIds: Set<string>;
+  },
+  minPercentileSample: number,
+): RemoteSessionSummary {
   const uniqueSeconds = mergeIntervalSeconds(raw.intervals);
   const durationStatus: RemoteSessionSummary["durationStatus"] =
-    raw.completedDurations.length === 0 ? "unavailable" : raw.completedDurations.length < MIN_PERCENTILE_SAMPLE ? "insufficient_sample" : "available";
+    raw.completedDurations.length === 0 ? "unavailable" : raw.completedDurations.length < minPercentileSample ? "insufficient_sample" : "available";
   return {
     sessions: raw.connected,
     failedSessions: raw.failed,
@@ -99,11 +105,12 @@ function finalizeSummary(raw: {
 }
 
 export async function getRemoteSessionAnalytics(): Promise<RemoteSessionAnalytics> {
-  const [sessions, devices, users, organizations] = await Promise.all([
+  const [sessions, devices, users, organizations, settings] = await Promise.all([
     prisma.remoteSession.findMany({ orderBy: { startedAt: "asc" } }),
     prisma.ninjaDevice.findMany({ select: { ninjaDeviceId: true, displayName: true, organizationId: true } }),
     fetchNinjaUsers().catch(() => new Map<string, string>()),
     fetchNinjaOrganizations().catch(() => [] as { id: string; name: string }[]),
+    getKpiSettings(),
   ]);
 
   const deviceById = new Map(devices.map((d) => [d.ninjaDeviceId, d]));
@@ -195,7 +202,7 @@ export async function getRemoteSessionAnalytics(): Promise<RemoteSessionAnalytic
   const byTech: TechRemoteSummary[] = KNOWN_TECHS.map((tech) => ({
     tech,
     techLabel: tech,
-    ...finalizeSummary(rawByTech.get(tech) ?? newRaw()),
+    ...finalizeSummary(rawByTech.get(tech) ?? newRaw(), settings.minPercentileSample),
   }));
 
   const topDevices = [...deviceStats.entries()]
@@ -224,7 +231,7 @@ export async function getRemoteSessionAnalytics(): Promise<RemoteSessionAnalytic
 
   return {
     coverageStart,
-    org: finalizeSummary(orgRaw),
+    org: finalizeSummary(orgRaw, settings.minPercentileSample),
     byTech,
     topDevices,
     topClients,

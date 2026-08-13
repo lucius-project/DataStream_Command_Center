@@ -43,48 +43,41 @@ import { median } from "./serviceDeskHealth";
 import type { TechPerformance } from "./techPerformance";
 import { buildTrend } from "./techPerformance";
 import type { KpiTrend } from "./businessHealth";
+import type { TechRole } from "@/app/generated/prisma/client";
+import { getKpiSettings, type TechRoleConfigValue } from "./kpiSettings";
+import { TECH_ROLE_LABELS } from "@/lib/techRole";
 
-const MIN_SLA_SAMPLE = 5;
-const RESOLUTION_WINDOW_DAYS = 30;
+// TechRole is a real Prisma enum (Phase 12, see KpiSettings/TechRoleConfig
+// in schema.prisma) rather than a hand-written TS union — re-exported here
+// so existing importers (TechPerformanceRow.tsx etc.) are unaffected by
+// where the type actually lives. Role assignment itself now comes from
+// getTechRoleConfigs() (lib/services/kpiSettings.ts), admin-editable via
+// /admin, replacing the old hardcoded TECH_ROLES map — see roleFor below.
+export type { TechRole };
 
-export type TechRole =
-  | "Service Desk Technician"
-  | "Senior Technician"
-  | "Escalation Engineer"
-  | "Project Engineer"
-  | "Service Desk Manager"
-  | "Hybrid";
-
-// Mandatory per the spec ("Role Normalization... this is mandatory"),
-// but the admin UI to edit it is explicitly Phase 12's job ("Roles"
-// under Admin settings). Until then this static map is the single
-// source of truth, same pattern as KNOWN_TECHS in halopsa.ts — and
-// every tech defaults to the same role rather than a guessed seniority
-// ranking, since asserting a specific person's role wrong is worse than
-// not differentiating yet. Update this (or wait for the Phase 12 admin
-// UI) once real role assignments are confirmed.
-export const TECH_ROLES: Record<Tech, TechRole> = {
-  Miguel: "Service Desk Technician",
-  Cameron: "Service Desk Technician",
-  Darryll: "Service Desk Technician",
-  Emily: "Service Desk Technician",
-};
+// Display labels — imported from lib/techRole.ts (a dependency-free
+// module) and re-exported here for backward compat, rather than defined
+// in this file. This file transitively imports lib/prisma.ts; a "use
+// client" component importing TECH_ROLE_LABELS from here directly would
+// pull that whole chain into the browser bundle and fail to build
+// (confirmed live — see lib/techRole.ts's own comment). Client
+// components (e.g. components/admin/TechRolesForm.tsx) must import
+// TECH_ROLE_LABELS from lib/techRole.ts directly instead.
+export { TECH_ROLE_LABELS };
 
 // Role-normalized "appropriate throughput" reference band — a judgment
 // call configured per role (same honesty pattern as the 15s ring-time
 // target in techPerformance.ts), not a cited industry benchmark. Widened
 // for roles whose work is inherently lower-volume/higher-complexity so a
 // senior engineer solving hard escalations doesn't score poorly simply
-// for closing fewer tickets — the spec's own example. Uniform for now
-// since every tech defaults to the same role above; differentiates
-// automatically the moment TECH_ROLES is updated.
+// for closing fewer tickets — the spec's own example.
 const THROUGHPUT_BAND: Record<TechRole, { green: number; yellow: number }> = {
-  "Service Desk Technician": { green: 12, yellow: 6 },
-  "Senior Technician": { green: 9, yellow: 4 },
-  "Escalation Engineer": { green: 5, yellow: 2 },
-  "Project Engineer": { green: 5, yellow: 2 },
-  "Service Desk Manager": { green: 5, yellow: 2 },
-  Hybrid: { green: 8, yellow: 4 },
+  SERVICE_DESK_TECHNICIAN: { green: 12, yellow: 6 },
+  SENIOR_TECHNICIAN: { green: 9, yellow: 4 },
+  ESCALATION_ENGINEER: { green: 5, yellow: 2 },
+  PROJECT_ENGINEER: { green: 5, yellow: 2 },
+  SERVICE_DESK_MANAGER: { green: 5, yellow: 2 },
+  HYBRID: { green: 8, yellow: 4 },
 };
 
 export type TechSlaMetric = {
@@ -157,7 +150,8 @@ function emptyBucket(): Bucket {
 export async function getTechServiceMetrics(staleTickets?: StaleTicket[]): Promise<Map<Tech, TechServiceMetrics>> {
   const now = new Date();
   const weekStart = startOfWeek();
-  const windowStart = new Date(now.getTime() - RESOLUTION_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const { minSlaSample, resolutionWindowDays } = await getKpiSettings();
+  const windowStart = new Date(now.getTime() - resolutionWindowDays * 24 * 60 * 60 * 1000);
 
   const [openTickets, closedTickets, stale] = await Promise.all([
     prisma.ticketSnapshot.findMany({ where: { respondByAt: { not: null } } }),
@@ -216,7 +210,7 @@ export async function getTechServiceMetrics(staleTickets?: StaleTicket[]): Promi
 
   const toSla = (met: number, eligible: number): TechSlaMetric => {
     if (eligible === 0) return { status: "unavailable", pct: null, met, eligible };
-    if (eligible < MIN_SLA_SAMPLE) return { status: "insufficient_sample", pct: null, met, eligible };
+    if (eligible < minSlaSample) return { status: "insufficient_sample", pct: null, met, eligible };
     return { status: "available", pct: Math.round((met / eligible) * 1000) / 10, met, eligible };
   };
 
@@ -288,8 +282,10 @@ export type TechPerformanceScoreResult = {
 };
 
 // Spec's stated framework: Service Delivery 30, Quality 25,
-// Productivity 20, Work Management 15, Phone 10.
-const BASE_WEIGHTS = { serviceDelivery: 30, quality: 25, productivity: 20, workManagement: 15, phone: 10 } as const;
+// Productivity 20, Work Management 15, Phone 10 — now admin-editable
+// (Phase 12, KpiSettings.techWeight* fields, /admin). See
+// computeTechPerformanceScore's `weights` parameter.
+type TechScoreWeights = { serviceDelivery: number; quality: number; productivity: number; workManagement: number; phone: number };
 
 // Response-time-to-score band — lower is better, a judgment call (not a
 // cited benchmark), same honesty pattern as the SLA metrics' own
@@ -335,6 +331,7 @@ export function computeTechPerformanceScore(
   tech: TechPerformance,
   serviceMetrics: TechServiceMetrics,
   role: TechRole,
+  weights: TechScoreWeights,
 ): TechPerformanceScoreResult {
   const band = THROUGHPUT_BAND[role];
   const raw: { key: TechScoreCategory["key"]; label: string; score: number | null; detail: string }[] = [
@@ -369,7 +366,7 @@ export function computeTechPerformanceScore(
       key: "productivity",
       label: "Productivity",
       score: productivityScore(serviceMetrics.closedThisWeek, role),
-      detail: `${serviceMetrics.closedThisWeek} ticket${serviceMetrics.closedThisWeek === 1 ? "" : "s"} closed this week · role-normalized target for ${role}: ${band.green}+/week`,
+      detail: `${serviceMetrics.closedThisWeek} ticket${serviceMetrics.closedThisWeek === 1 ? "" : "s"} closed this week · role-normalized target for ${TECH_ROLE_LABELS[role]}: ${band.green}+/week`,
     },
     {
       key: "workManagement",
@@ -386,12 +383,12 @@ export function computeTechPerformanceScore(
   ];
 
   const available = raw.filter((c) => c.score !== null);
-  const baseWeightSum = available.reduce((sum, c) => sum + BASE_WEIGHTS[c.key], 0);
+  const baseWeightSum = available.reduce((sum, c) => sum + weights[c.key], 0);
 
   const categories: TechScoreCategory[] = raw.map((c) => ({
     key: c.key,
     label: c.label,
-    weightPct: c.score === null ? 0 : baseWeightSum > 0 ? Math.round((BASE_WEIGHTS[c.key] / baseWeightSum) * 1000) / 10 : 0,
+    weightPct: c.score === null ? 0 : baseWeightSum > 0 ? Math.round((weights[c.key] / baseWeightSum) * 1000) / 10 : 0,
     score: c.score,
     detail: c.detail,
   }));
@@ -527,8 +524,14 @@ function emptyServiceMetrics(): TechServiceMetrics {
 // narrows a page-level `string` back to `Tech`, with a safe fallback if
 // the roster ever drifts out of sync — never a silent crash on a page
 // serving a live dashboard.
-export function roleFor(person: string): TechRole {
-  return TECH_ROLES[person as Tech] ?? "Service Desk Technician";
+// techRoleConfigs comes from getTechRoleConfigs() (kpiSettings.ts, Phase
+// 12) — fetched once per page and threaded through, same "sync happens
+// up top" discipline as everything else on this page. Falls back to the
+// default role if the roster ever drifts out of sync with
+// TechRoleConfig's rows, never a silent crash on a page serving a live
+// dashboard.
+export function roleFor(person: string, techRoleConfigs: Map<Tech, TechRoleConfigValue>): TechRole {
+  return techRoleConfigs.get(person as Tech)?.role ?? "SERVICE_DESK_TECHNICIAN";
 }
 
 export function serviceMetricsFor(map: Map<Tech, TechServiceMetrics>, person: string): TechServiceMetrics {

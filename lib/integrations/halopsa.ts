@@ -30,6 +30,7 @@ import {
 } from "./haloShared";
 import { startOfWeek, endOfWeek } from "@/lib/dateUtils";
 import { generateAttentionFlagsFromTickets } from "@/lib/services/operations";
+import { getTechRoleConfigs } from "@/lib/services/kpiSettings";
 import type { TicketPriority } from "@/app/generated/prisma/client";
 
 export type Tech = "Miguel" | "Cameron" | "Darryll" | "Emily";
@@ -434,8 +435,6 @@ async function computeWeeklyHoursByTech(
   return { weekly: hoursByTech, daily: dailyByTech };
 }
 
-const EXPECTED_WEEKLY_HOURS = 40;
-
 export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: string }> {
   const credential = await prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } });
   if (!credential) {
@@ -456,13 +455,20 @@ export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: stri
     const periodStart = startOfWeek();
     const periodEnd = endOfWeek();
     const days = weekdayDates();
+    // Per-tech, admin-editable (Phase 12, /admin) — replaces the old flat
+    // EXPECTED_WEEKLY_HOURS = 40 constant applied uniformly to everyone.
+    const techRoleConfigs = await getTechRoleConfigs(KNOWN_TECHS);
 
     for (const person of KNOWN_TECHS) {
       const loggedHours = hoursByTech.get(person) ?? 0;
+      const expectedHours = techRoleConfigs.get(person)?.expectedWeeklyHours ?? 40;
       await prisma.timeGap.upsert({
         where: { person_periodStart: { person, periodStart } },
-        update: { loggedHours, periodEnd },
-        create: { person, role: "TECH", expectedHours: EXPECTED_WEEKLY_HOURS, loggedHours, periodStart, periodEnd },
+        // expectedHours included in `update` too (not just `create`) so
+        // an admin's change takes effect on the very next page load this
+        // week, not only starting next week's first sync.
+        update: { loggedHours, periodEnd, expectedHours },
+        create: { person, role: "TECH", expectedHours, loggedHours, periodStart, periodEnd },
       });
 
       const dayMap = dailyByTech.get(person);

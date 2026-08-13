@@ -761,3 +761,102 @@ model NinjaActivitySyncState {
   newestActivityId Int
   updatedAt        DateTime @updatedAt
 }
+
+// ---------------------------------------------------------------------------
+// Admin / KPI Settings (Phase 12)
+// ---------------------------------------------------------------------------
+
+// Singleton row (see lib/services/kpiSettings.ts's getKpiSettings — a
+// get-or-create, not a plain findUnique) centralizing the score weights,
+// sample-size minimums, and thresholds that were previously hardcoded
+// module-level constants scattered across serviceDeskHealth.ts,
+// techPerformanceScore.ts, callActivity.ts, remoteSessions.ts, and
+// operations.ts (several of them literally duplicated byte-for-byte
+// across two files). Every @default below matches the exact value that
+// constant held before this table existed, so creating this row for the
+// first time changes nothing until an admin actually edits a value via
+// /admin. Deliberately NOT throttle-cached like getContactDirectory —
+// this is a local SQLite primary-key read, not an external API call, and
+// an admin's save should take effect on the very next page load.
+model KpiSettings {
+  id String @id @default("kpi-settings")
+
+  // Service Desk Health Score weights — must sum to 100 (enforced by
+  // updateKpiSettings, not by the schema itself; SQLite has no CHECK
+  // constraint support in this Prisma setup). Matches BASE_WEIGHTS,
+  // formerly serviceDeskHealth.ts.
+  healthWeightResponsiveness Int @default(25)
+  healthWeightResolution     Int @default(20)
+  healthWeightWorkload       Int @default(20)
+  healthWeightPhone          Int @default(15)
+
+  // Technician Performance Score weights — same sum-to-100 rule.
+  // Matches BASE_WEIGHTS, formerly techPerformanceScore.ts.
+  techWeightServiceDelivery Int @default(30)
+  techWeightQuality         Int @default(25)
+  techWeightProductivity    Int @default(20)
+  techWeightWorkManagement  Int @default(15)
+  techWeightPhone           Int @default(10)
+
+  // Sample-size minimums / lookback windows — formerly duplicated
+  // identically across serviceDeskHealth.ts + techPerformanceScore.ts
+  // (minSlaSample, resolutionWindowDays) and callActivity.ts +
+  // remoteSessions.ts (minPercentileSample).
+  minSlaSample         Int @default(5)
+  resolutionWindowDays Int @default(30)
+  minPercentileSample  Int @default(5)
+
+  // Thresholds — formerly CALLBACK_TARGET_MINUTES (callActivity.ts) and
+  // STALE_BUSINESS_HOURS (operations.ts).
+  callbackTargetMinutes Int @default(15)
+  staleBusinessHours    Int @default(24)
+
+  // Service-Desk-relevant SLA/status color bands (green-at-or-above,
+  // yellow-at-or-above, red below yellow — see bandHigherIsBetter/
+  // bandLowerIsBetter in lib/kpiStatus.ts). Aging is lower-is-better
+  // (green at-or-below agingGreenCount). Business Health's own bands
+  // (Gross Margin, Device Health, etc.) are a different page and stay
+  // hardcoded — out of this phase's scope.
+  responseSlaGreenPct   Int @default(90)
+  responseSlaYellowPct  Int @default(75)
+  resolutionSlaGreenPct Int @default(90)
+  resolutionSlaYellowPct Int @default(75)
+  agingGreenCount       Int @default(0)
+  agingYellowCount      Int @default(4)
+  answerRateGreenPct    Int @default(90)
+  answerRateYellowPct   Int @default(80)
+
+  updatedAt DateTime @updatedAt
+}
+
+// Matches the spec's "Technician Roles" framework — role affects
+// THROUGHPUT_BAND in techPerformanceScore.ts (role-normalized
+// productivity targets). A real Prisma enum (not a hand-written TS
+// union, the pre-Phase-12 approach) so an invalid role value can't be
+// written by a bug or a stray admin API payload — same enum-for-a-closed-
+// set-of-labels convention as TicketPriority above.
+enum TechRole {
+  SERVICE_DESK_TECHNICIAN
+  SENIOR_TECHNICIAN
+  ESCALATION_ENGINEER
+  PROJECT_ENGINEER
+  SERVICE_DESK_MANAGER
+  HYBRID
+}
+
+// One row per known tech (see KNOWN_TECHS, lib/integrations/halopsa.ts —
+// the roster itself stays a compile-time TS union, only the role/hours
+// assigned to each known name become admin-editable here). Replaces the
+// hardcoded TECH_ROLES map (techPerformanceScore.ts) and the flat
+// EXPECTED_WEEKLY_HOURS = 40 constant (halopsa.ts) — expectedWeeklyHours
+// is now genuinely per-tech rather than uniform for everyone.
+// getTechRoleConfigs() ensures a row exists per KNOWN_TECHS member with
+// these defaults, same "small per-person table, upsert on demand" pattern
+// as DailyHours/TechScoreDaily.
+model TechRoleConfig {
+  id                  String   @id @default(cuid())
+  person              String   @unique
+  role                TechRole @default(SERVICE_DESK_TECHNICIAN)
+  expectedWeeklyHours Float    @default(40)
+  updatedAt           DateTime @updatedAt
+}

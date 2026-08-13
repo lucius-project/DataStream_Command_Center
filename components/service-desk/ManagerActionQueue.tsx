@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { AlertSeverity, ManagerAlert } from "@/lib/services/managerAlerts";
+import { InfoButton } from "@/components/shared/InfoButton";
 
 const SEVERITY_LABEL: Record<AlertSeverity, string> = {
   CRITICAL: "Critical",
@@ -82,7 +83,15 @@ export function ManagerActionQueue({ alerts }: { alerts: ManagerAlert[] }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="font-display text-sm font-medium text-text-muted">Manager Action Queue</h2>
+      <span className="flex items-center gap-1.5">
+        <h2 className="font-display text-sm font-medium text-text-muted">Manager Action Queue</h2>
+        <InfoButton
+          title="Manager Action Queue"
+          what="Every currently-flagged item across the whole desk — the full, sortable version of the Needs Attention cards above, for working through the list methodically rather than just seeing the top few."
+          meaning={`${alerts.length} item${alerts.length === 1 ? "" : "s"} currently in the queue. Click a column header to sort.`}
+          calculation="Same rule-based checks as Needs Attention (not AI): unattended P1/P2s, unassigned priority tickets, missed calls not returned, SLA-approaching tickets, stale tickets, technician overload, growing backlog, excessive on-hold, missing time entries, client ticket spikes, declining phone answer rate, utilization outside range. Default order is customer impact, then severity, then SLA risk, then priority, then age."
+        />
+      </span>
       {alerts.length === 0 ? (
         <div className="rounded-md border border-border bg-panel-raised p-4 text-center text-sm text-text-muted">
           Nothing in the action queue right now.

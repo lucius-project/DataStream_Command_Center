@@ -10,12 +10,14 @@ import type { KpiTrend } from "./businessHealth";
 // can safely share one implementation via stats.ts instead of each
 // keeping their own copy.
 import { median, percentile90, buildTrend } from "./stats";
+import { getKpiSettings } from "./kpiSettings";
 
 const RECENT_CALLS_LIMIT = 100;
 
 // Below this many samples, a median/P90 is misleadingly precise — same
-// principle as MIN_SLA_SAMPLE elsewhere in this app.
-const MIN_PERCENTILE_SAMPLE = 5;
+// principle as minSlaSample elsewhere in this app. Admin-editable (Phase
+// 12, KpiSettings.minPercentileSample) — was a module constant,
+// duplicated identically in remoteSessions.ts.
 
 export async function getRecentCalls() {
   return prisma.callRecord.findMany({
@@ -318,8 +320,10 @@ export async function getCallAnswerRateTrend(directory: ContactDirectory | null)
 // same number exists — not any outbound call ever, only one that happened
 // *after* the miss, since an earlier unrelated call to that number
 // obviously isn't a callback. Judgment call, not a cited industry figure,
-// same honesty pattern as every other threshold in this app.
-const CALLBACK_TARGET_MINUTES = 15;
+// same honesty pattern as every other threshold in this app. The target
+// itself is admin-editable (Phase 12, KpiSettings.callbackTargetMinutes);
+// the lookback window stays a fixed constant — narrower operational
+// scope, not something the spec named as configurable.
 const CALLBACK_LOOKBACK_HOURS = 8;
 
 type MissedCallLike = {
@@ -372,10 +376,11 @@ export type UnreturnedCall = {
 // already applied) inbound calls — a call that never rang a desk phone
 // or was actually answered by someone else was never "missed" in the
 // first place, so it can't be "unreturned" either. Only flags a miss
-// once CALLBACK_TARGET_MINUTES has actually elapsed — a call missed 2
+// once callbackTargetMinutes has actually elapsed — a call missed 2
 // minutes ago isn't overdue yet, it just hasn't been called back.
 export async function getUnreturnedMissedCalls(directory: ContactDirectory | null): Promise<UnreturnedCall[]> {
   const now = new Date();
+  const { callbackTargetMinutes } = await getKpiSettings();
   const lookbackStart = new Date(now.getTime() - CALLBACK_LOOKBACK_HOURS * 60 * 60 * 1000);
 
   const rawCalls = await prisma.callRecord.findMany({
@@ -395,7 +400,7 @@ export async function getUnreturnedMissedCalls(directory: ContactDirectory | nul
     if (returnedAt) continue;
 
     const minutesSinceMissed = Math.round((now.getTime() - call.startAt.getTime()) / 60000);
-    if (minutesSinceMissed < CALLBACK_TARGET_MINUTES) continue;
+    if (minutesSinceMissed < callbackTargetMinutes) continue;
 
     unreturned.push({
       id: call.id,
@@ -432,6 +437,7 @@ export type MissedCallRecoveryStats = {
 // come back to, unlike the live queue's fixed lookback window; this is
 // the honest historical record, that's the operational alert.
 export async function getMissedCallRecoveryStats(directory: ContactDirectory | null): Promise<MissedCallRecoveryStats> {
+  const { minPercentileSample } = await getKpiSettings();
   const windowStart = new Date(Date.now() - ANALYTICS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
   const rawCalls = await prisma.callRecord.findMany({
@@ -457,7 +463,7 @@ export async function getMissedCallRecoveryStats(directory: ContactDirectory | n
   };
 
   if (missedCalls === 0) return { ...base, status: "unavailable", callbackPct: null };
-  if (missedCalls < MIN_PERCENTILE_SAMPLE) return { ...base, status: "insufficient_sample", callbackPct: null };
+  if (missedCalls < minPercentileSample) return { ...base, status: "insufficient_sample", callbackPct: null };
   return { ...base, status: "available", callbackPct: Math.round((returnedCalls / missedCalls) * 1000) / 10 };
 }
 
@@ -486,6 +492,7 @@ export type PhoneAnalyticsDetail = {
 // meant to answer them, so folding them in would misrepresent both the
 // after-hours bucket and the business-hours one.
 export async function getPhoneAnalyticsDetail(directory: ContactDirectory | null): Promise<PhoneAnalyticsDetail> {
+  const { minPercentileSample } = await getKpiSettings();
   const windowStart = new Date(Date.now() - ANALYTICS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
   const rawCalls = await prisma.callRecord.findMany({
@@ -519,10 +526,10 @@ export async function getPhoneAnalyticsDetail(directory: ContactDirectory | null
     answeredInbound: answeredInbound.length,
     missedInbound: missedInbound.length,
     answerRatePct: inbound.length > 0 ? Math.round((answeredInbound.length / inbound.length) * 1000) / 10 : null,
-    ringTimeStatus: ringSamples.length === 0 ? "unavailable" : ringSamples.length < MIN_PERCENTILE_SAMPLE ? "insufficient_sample" : "available",
+    ringTimeStatus: ringSamples.length === 0 ? "unavailable" : ringSamples.length < minPercentileSample ? "insufficient_sample" : "available",
     medianRingSeconds: median(ringSamples),
     p90RingSeconds: percentile90(ringSamples),
-    talkTimeStatus: talkSamples.length === 0 ? "unavailable" : talkSamples.length < MIN_PERCENTILE_SAMPLE ? "insufficient_sample" : "available",
+    talkTimeStatus: talkSamples.length === 0 ? "unavailable" : talkSamples.length < minPercentileSample ? "insufficient_sample" : "available",
     medianTalkSeconds: median(talkSamples),
     p90TalkSeconds: percentile90(talkSamples),
     afterHours: {

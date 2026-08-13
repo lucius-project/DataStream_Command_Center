@@ -1,4 +1,5 @@
 import type { MissedCallRecoveryStats, UnreturnedCall } from "@/lib/services/callActivity";
+import { InfoButton } from "@/components/shared/InfoButton";
 
 const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
@@ -18,7 +19,15 @@ export function MissedCallRecoveryPanel({
   return (
     <div className="mt-4 rounded-lg border border-border bg-panel p-4">
       <div className="flex items-baseline justify-between">
-        <span className="font-display text-sm font-medium text-text">Missed Call Recovery</span>
+        <span className="flex items-center gap-1.5">
+          <span className="font-display text-sm font-medium text-text">Missed Call Recovery</span>
+          <InfoButton
+            title="Missed Call Recovery"
+            what="Whether missed inbound calls actually get called back, and how fast — a missed call isn't automatically a lost customer if someone follows up quickly."
+            meaning={`${stats.missedCalls} missed calls in the last ${stats.windowDays} business days${stats.status === "available" ? `, ${stats.callbackPct}% called back` : ""}. ${unreturned.length} still outstanding right now.`}
+            calculation="Callback rate = calls returned ÷ calls missed, over the trailing window (business hours only). Median and P90 callback time measure how long it took to call back the ones that were returned. 'Currently unreturned' is the live, real-time list of missed calls with no callback yet — the same list Manager Alerts flags once one sits too long."
+          />
+        </span>
         <span className="font-data text-[11px] text-text-faint">last {stats.windowDays} days, business hours</span>
       </div>
 

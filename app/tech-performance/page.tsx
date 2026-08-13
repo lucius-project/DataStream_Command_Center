@@ -15,6 +15,7 @@ import { getCallAnswerRateTrend } from "@/lib/services/callActivity";
 import { getOrgCoachingInsights, getTechCoachingInsights } from "@/lib/services/coaching";
 import { buildMorningBrief } from "@/lib/services/morningBrief";
 import { getStaleTickets } from "@/lib/services/operations";
+import { getKpiSettings, getTechRoleConfigs } from "@/lib/services/kpiSettings";
 import { getRemoteSessionAnalytics, type TechRemoteSummary } from "@/lib/services/remoteSessions";
 import {
   getCallTicketMatches,
@@ -30,7 +31,7 @@ import {
   buildTimeCoverageRows,
   getActivityTimeline,
 } from "@/lib/services/activityCorrelation";
-import type { Tech } from "@/lib/integrations/halopsa";
+import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import {
   getTechServiceMetrics,
   getTicketsByTech,
@@ -67,14 +68,24 @@ export default async function TechPerformancePage() {
   // so both this week's TicketLoadWeekly snapshot and the new Service
   // Desk Health section reflect freshly-synced ticket data, not whatever
   // was on disk before this page load.
-  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo, healthYesterday] = await Promise.all([
-    syncTicketLoadHistory(),
-    getContactDirectory().catch(() => null),
-    getServiceDeskHealthSnapshot(),
-    getSlaAtRiskTickets(),
-    getServiceDeskHealthWeekAgo(),
-    getServiceDeskHealthYesterday(),
-  ]);
+  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo, healthYesterday, kpiSettings, techRoleConfigs] =
+    await Promise.all([
+      syncTicketLoadHistory(),
+      getContactDirectory().catch(() => null),
+      getServiceDeskHealthSnapshot(),
+      getSlaAtRiskTickets(),
+      getServiceDeskHealthWeekAgo(),
+      getServiceDeskHealthYesterday(),
+      getKpiSettings(),
+      getTechRoleConfigs(KNOWN_TECHS),
+    ]);
+  const techScoreWeights = {
+    serviceDelivery: kpiSettings.techWeightServiceDelivery,
+    quality: kpiSettings.techWeightQuality,
+    productivity: kpiSettings.techWeightProductivity,
+    workManagement: kpiSettings.techWeightWorkManagement,
+    phone: kpiSettings.techWeightPhone,
+  };
   // Depends on directory above, so it joins the next batch rather than
   // this one — used only by coaching.ts's org-level Call Answer Rate
   // insight (Phase 11), not rendered directly on this page otherwise.
@@ -124,7 +135,7 @@ export default async function TechPerformancePage() {
   const scoreByTech = new Map<Tech, TechPerformanceScoreResult>(
     techs.map((tech) => [
       tech.person as Tech,
-      computeTechPerformanceScore(tech, serviceMetricsFor(serviceMetricsByTech, tech.person), roleFor(tech.person)),
+      computeTechPerformanceScore(tech, serviceMetricsFor(serviceMetricsByTech, tech.person), roleFor(tech.person, techRoleConfigs), techScoreWeights),
     ]),
   );
   const techScoreSyncError = await Promise.all(
@@ -171,7 +182,6 @@ export default async function TechPerformancePage() {
     healthSnapshot.healthScore.score,
     healthYesterday,
     healthSnapshot.responseSla.status === "available" ? healthSnapshot.responseSla.pct : null,
-    healthSnapshot.answerRate.status === "available" ? healthSnapshot.answerRate.pct : null,
     alerts,
     coachingInsights,
   );
@@ -205,7 +215,7 @@ export default async function TechPerformancePage() {
       )}
 
       <div className="mt-6">
-        <ServiceDeskHealthSection snapshot={healthSnapshot} weekAgo={healthWeekAgo} />
+        <ServiceDeskHealthSection snapshot={healthSnapshot} weekAgo={healthWeekAgo} settings={kpiSettings} />
       </div>
 
       <div className="mt-6">
@@ -244,7 +254,7 @@ export default async function TechPerformancePage() {
 
       <div className="mt-3 flex flex-col gap-2">
         {techs.map((tech) => {
-          const role = roleFor(tech.person);
+          const role = roleFor(tech.person, techRoleConfigs);
           const serviceMetrics = serviceMetricsFor(serviceMetricsByTech, tech.person);
           const scoreResult = scoreByTech.get(tech.person as Tech)!;
           const scoreTrend = getTechScoreTrendArrow(scoreResult.score, techScoreWeekAgoByTech.get(tech.person as Tech) ?? null);

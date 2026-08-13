@@ -90,6 +90,13 @@ export function TechScoreBadge({
               </button>
             </div>
 
+            <div className="font-data text-[11px] text-text-faint">
+              A single weighted score combining this technician&apos;s Service Delivery, Quality, Productivity, Work
+              Management, and Phone categories into one number — role-normalized, so a senior engineer working hard
+              escalations isn&apos;t held to the same throughput target as a service desk technician. 80+ is green
+              (healthy), 60-79 is yellow (worth watching), below 60 is red (needs attention).
+            </div>
+
             <div className="flex flex-col gap-3">
               {result.categories.map((c) => (
                 <div key={c.key} className="rounded-md border border-border bg-panel-raised p-3">

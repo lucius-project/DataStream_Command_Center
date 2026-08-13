@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { MorningBrief } from "@/lib/services/morningBrief";
 import { LABEL_TEXT, LABEL_TEXT_CLASS } from "./NetTicketChangeTile";
+import { STATUS_TEXT } from "@/lib/kpiStatus";
+import { InfoButton } from "@/components/shared/InfoButton";
 
 function scoreColor(score: number | null): string {
   if (score === null) return "text-text-faint";
@@ -19,7 +21,15 @@ export function MorningBriefCard({ brief }: { brief: MorningBrief }) {
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">Morning Brief</span>
+        <span className="flex items-center gap-1.5">
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">Morning Brief</span>
+          <InfoButton
+            title="Morning Brief"
+            what="A five-second summary at the top of the page — every figure here is a plain reshaping of numbers computed elsewhere (Service Desk Health, Manager Alerts, Coaching Insights), never a new or separately-calculated number."
+            meaning="Service health is today's live composite score. Yesterday's created/closed/net comes from the last time this page was loaded on that day (no background job — a day nobody opened the page has no row). Response SLA is today's live figure; Phone Answer is deliberately yesterday's, since 'how did phones go yesterday' is a different, more complete question than a still-in-progress today."
+            calculation="Primary Concern is simply the highest-priority item from Manager Alerts. Positive Highlight is the first positive-tone Coaching Insight, if any exist yet."
+          />
+        </span>
         <Link href="/tech-performance/huddle" className="font-data text-[11px] text-accent hover:underline">
           Huddle Mode →
         </Link>
@@ -48,7 +58,10 @@ export function MorningBriefCard({ brief }: { brief: MorningBrief }) {
           Response SLA: {brief.responseSlaPct !== null ? `${Math.round(brief.responseSlaPct)}%` : "—"}
         </div>
         <div className="font-data text-xs text-text-muted">
-          Phone Answer: {brief.phoneAnswerRatePct !== null ? `${Math.round(brief.phoneAnswerRatePct)}%` : "—"}
+          Phone Answer (yesterday):{" "}
+          <span className={brief.phoneAnswerRatePct !== null ? STATUS_TEXT[brief.phoneAnswerRateStatus] : undefined}>
+            {brief.phoneAnswerRatePct !== null ? `${Math.round(brief.phoneAnswerRatePct)}%` : "—"}
+          </span>
         </div>
       </div>
 

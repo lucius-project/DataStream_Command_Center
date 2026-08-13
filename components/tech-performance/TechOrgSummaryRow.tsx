@@ -1,5 +1,6 @@
 import type { TechOrgSummary } from "@/lib/services/techPerformance";
 import { Stat, GroupLabel, DailyHoursBars } from "./shared";
+import { InfoButton } from "@/components/shared/InfoButton";
 
 // Supplementary detail below the KPI strip (see OrgKpiStrip) — the
 // headline "is the team healthy" signal already lives in the three KPI
@@ -15,7 +16,15 @@ export function TechOrgSummaryRow({ org, todayIndex }: { org: TechOrgSummary; to
   return (
     <div className="rounded-lg border border-border bg-panel-raised p-4">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-display text-sm font-medium text-text-muted">Team detail</span>
+        <span className="flex items-center gap-1.5">
+          <span className="font-display text-sm font-medium text-text-muted">Team detail</span>
+          <InfoButton
+            title="Team Detail"
+            what="Supplementary counts underneath the Org KPI strip above — the exact tickets, hours, and calls behind those tiles' headline numbers, for the whole team (not attributed to individual technicians)."
+            meaning={`${org.loggedHours}h logged of ${org.expectedHours}h expected this week.`}
+            calculation="Hours are summed across every technician's logged time entries this week. Missed-call count and pickup rate are shown here (not on an individual tech's row) because a hunt-group ring can't be reliably attributed to the one technician who 'should' have answered it — it's a whole-team fact."
+          />
+        </span>
         <span className="font-data text-xs text-text-faint">
           {org.loggedHours}h / {org.expectedHours}h logged this week
         </span>

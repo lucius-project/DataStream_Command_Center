@@ -13,7 +13,8 @@ import { generateManagerAlerts } from "@/lib/services/managerAlerts";
 import { getCallAnswerRateTrend, getMissedCallRecoveryStats, getUnreturnedMissedCalls } from "@/lib/services/callActivity";
 import { getOrgCoachingInsights, getTechCoachingInsights } from "@/lib/services/coaching";
 import { buildMorningBrief } from "@/lib/services/morningBrief";
-import type { Tech } from "@/lib/integrations/halopsa";
+import { getKpiSettings, getTechRoleConfigs } from "@/lib/services/kpiSettings";
+import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { MorningBriefCard } from "@/components/service-desk/MorningBriefCard";
 import { BacklogBreakdownPanel } from "@/components/service-desk/BacklogBreakdownPanel";
 import { SlaAtRiskSection } from "@/components/service-desk/SlaAtRiskSection";
@@ -35,14 +36,24 @@ import { InsightCard } from "@/components/service-desk/CoachingSection";
 export default async function TechPerformanceHuddlePage() {
   const directory = await getContactDirectory().catch(() => null);
 
-  const [healthSnapshot, healthWeekAgo, healthYesterday, slaAtRisk, backlog, staleTickets] = await Promise.all([
-    getServiceDeskHealthSnapshot(),
-    getServiceDeskHealthWeekAgo(),
-    getServiceDeskHealthYesterday(),
-    getSlaAtRiskTickets(),
-    getBacklogBreakdown(),
-    getStaleTickets(),
-  ]);
+  const [healthSnapshot, healthWeekAgo, healthYesterday, slaAtRisk, backlog, staleTickets, kpiSettings, techRoleConfigs] =
+    await Promise.all([
+      getServiceDeskHealthSnapshot(),
+      getServiceDeskHealthWeekAgo(),
+      getServiceDeskHealthYesterday(),
+      getSlaAtRiskTickets(),
+      getBacklogBreakdown(),
+      getStaleTickets(),
+      getKpiSettings(),
+      getTechRoleConfigs(KNOWN_TECHS),
+    ]);
+  const techScoreWeights = {
+    serviceDelivery: kpiSettings.techWeightServiceDelivery,
+    quality: kpiSettings.techWeightQuality,
+    productivity: kpiSettings.techWeightProductivity,
+    workManagement: kpiSettings.techWeightWorkManagement,
+    phone: kpiSettings.techWeightPhone,
+  };
 
   const [{ techs, org, todayIndex, lastWeek }, serviceMetricsByTech, callAnswerRateTrend, missedCallStats, unreturnedCalls] =
     await Promise.all([
@@ -56,7 +67,7 @@ export default async function TechPerformanceHuddlePage() {
   const scoreByTech = new Map(
     techs.map((tech) => [
       tech.person as Tech,
-      computeTechPerformanceScore(tech, serviceMetricsFor(serviceMetricsByTech, tech.person), roleFor(tech.person)),
+      computeTechPerformanceScore(tech, serviceMetricsFor(serviceMetricsByTech, tech.person), roleFor(tech.person, techRoleConfigs), techScoreWeights),
     ]),
   );
   const techScoreWeekAgoByTech = new Map(
@@ -89,7 +100,6 @@ export default async function TechPerformanceHuddlePage() {
     healthSnapshot.healthScore.score,
     healthYesterday,
     healthSnapshot.responseSla.status === "available" ? healthSnapshot.responseSla.pct : null,
-    healthSnapshot.answerRate.status === "available" ? healthSnapshot.answerRate.pct : null,
     alerts,
     coachingInsights,
   );

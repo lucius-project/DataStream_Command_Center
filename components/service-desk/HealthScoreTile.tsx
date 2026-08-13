@@ -93,6 +93,12 @@ export function HealthScoreTile({ result, trend }: { result: HealthScoreResult; 
               </button>
             </div>
 
+            <div className="font-data text-[11px] text-text-faint">
+              A single weighted score combining Responsiveness, Resolution, Workload, and Phone into one number — the
+              answer to &quot;how&apos;s the team doing right now,&quot; before drilling into any one category. 80+
+              is green (healthy), 60-79 is yellow (worth watching), below 60 is red (needs attention).
+            </div>
+
             <div className="flex flex-col gap-3">
               {result.categories.map((c) => (
                 <div key={c.key} className="rounded-md border border-border bg-panel-raised p-3">

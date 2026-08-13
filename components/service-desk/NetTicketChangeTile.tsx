@@ -1,4 +1,5 @@
 import type { NetTicketChange } from "@/lib/services/serviceDeskHealth";
+import { InfoButton } from "@/components/shared/InfoButton";
 
 // Exported for reuse by MorningBriefCard.tsx (Phase 11), which shows the
 // same label for yesterday's net change — one label→text/color mapping.
@@ -27,7 +28,14 @@ export const LABEL_PILL_CLASS: Record<NetTicketChange["label"], string> = {
 
 export function NetTicketChangeTile({ net }: { net: NetTicketChange }) {
   return (
-    <div className="flex flex-col justify-between rounded-lg border border-border bg-panel p-4">
+    <div className="relative flex flex-col justify-between rounded-lg border border-border bg-panel p-4">
+      <InfoButton
+        title="Net Ticket Change"
+        what="Whether the team is opening tickets faster than it's closing them today, or the other way around."
+        meaning={`Today: ${net.createdToday} created, ${net.closedToday} closed, net ${net.net >= 0 ? "+" : ""}${net.net} (${net.label === "GAINING_GROUND" ? "Gaining Ground" : net.label === "KEEPING_PACE" ? "Keeping Pace" : "Losing Ground"}).`}
+        calculation="Net = tickets created today − tickets closed today. A negative net (closing more than opening) is the healthy direction — 'Gaining Ground' means the backlog is shrinking, 'Losing Ground' means it's growing."
+        className="absolute top-3 right-3"
+      />
       <div className="font-data text-[10px] tracking-wide text-text-faint uppercase">Net Ticket Change — Today</div>
       <div className="mt-2 flex items-baseline gap-3">
         <span className={`font-display text-3xl font-semibold ${LABEL_TEXT_CLASS[net.label]}`}>

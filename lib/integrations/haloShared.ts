@@ -57,9 +57,24 @@ export function mapHaloDateOnly(raw: RawHaloRecord, keys: string[]): Date | null
 // HaloPSA action records identify the agent by free-text name (varies by
 // instance), not a stable ID mapped to our known tech list — so matching
 // is substring-based against KNOWN_TECHS. Shared by weekly (Team Time
-// Gaps) and monthly-per-client (Client Profitability) hours aggregation.
+// Gaps), monthly-per-client (Client Profitability) hours aggregation, and
+// every United Cloud/NinjaOne name resolution across the app (Phase
+// 12's audit found no stored ID-based mapping exists anywhere — this
+// runtime heuristic is the only mechanism, everywhere).
 export function matchKnownTech<T extends string>(agentName: string, techs: readonly T[]): T | undefined {
-  return techs.find((tech) => agentName.toLowerCase().includes(tech.toLowerCase()));
+  const lower = agentName.toLowerCase();
+  const matches = techs.filter((tech) => lower.includes(tech.toLowerCase()));
+  if (matches.length > 1) {
+    // Still first-match-wins (techs' own array order), same resolution
+    // as before this fix — only the silence is fixed, not the tie-break
+    // rule itself, so no output changes for any input that worked
+    // correctly before. A real roster/name collision deserves a human
+    // look, not a guess dressed up as certainty.
+    console.warn(
+      `matchKnownTech: "${agentName}" matches more than one known tech (${matches.join(", ")}) — using "${matches[0]}". Consider a less ambiguous name if this is unexpected.`,
+    );
+  }
+  return matches[0];
 }
 
 function sleep(ms: number): Promise<void> {

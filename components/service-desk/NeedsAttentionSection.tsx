@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { AlertSeverity, ManagerAlert } from "@/lib/services/managerAlerts";
 import { PriorityBadge } from "@/components/operations/PriorityBadge";
+import { InfoButton } from "@/components/shared/InfoButton";
 
 const SEVERITY_ORDER: AlertSeverity[] = ["CRITICAL", "WARNING", "MONITOR"];
 
@@ -55,7 +56,15 @@ export function NeedsAttentionSection({ alerts }: { alerts: ManagerAlert[] }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="font-display text-sm font-medium text-text-muted">Needs Attention</h2>
+      <span className="flex items-center gap-1.5">
+        <h2 className="font-display text-sm font-medium text-text-muted">Needs Attention</h2>
+        <InfoButton
+          title="Needs Attention"
+          what="The most severe items across the whole desk right now — the same source list as the full Manager Action Queue below, filtered to the ones worth an immediate look."
+          meaning={`${alerts.length} item${alerts.length === 1 ? "" : "s"} currently flagged, sorted by customer impact then severity.`}
+          calculation="Generated from a fixed set of rule-based checks (not AI): unattended P1/P2 tickets, unassigned priority tickets, missed calls not returned, tickets approaching or past their SLA deadline, stale tickets, technician overload, growing backlog, excessive on-hold tickets, missing time entries, client ticket spikes, declining phone answer rate, and utilization outside the expected range. Every card links directly to the ticket, call, or technician it's about."
+        />
+      </span>
       {alerts.length === 0 ? (
         <div className="rounded-md border border-border bg-panel-raised p-4 text-center text-sm text-text-muted">
           Nothing needs attention right now.

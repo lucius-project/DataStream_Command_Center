@@ -21,6 +21,7 @@ import type { Kpi, KpiTrend } from "./businessHealth";
 import { getCallActivitySummary } from "./callActivity";
 import { getBacklogBreakdown, getTechActionableAging, getStaleTickets, type BacklogBreakdown, type TechActionableAging } from "./operations";
 import { buildTrend } from "./techPerformance";
+import { getKpiSettings, type KpiSettings } from "./kpiSettings";
 import { median } from "./stats";
 
 // Below this many eligible tickets, a percentage is misleadingly precise
@@ -28,7 +29,9 @@ import { median } from "./stats";
 // flagged in the discovery report, applied here to Response/Resolution
 // SLA. Below the threshold the metric reports as unavailable with its
 // real sample count shown, not a fabricated-looking percentage.
-const MIN_SLA_SAMPLE = 5;
+// Admin-editable (Phase 12, KpiSettings.minSlaSample) — was a module
+// constant, duplicated identically in techPerformanceScore.ts; each
+// consumer now reads it via getKpiSettings() instead.
 
 export type SlaMetric = {
   status: "available" | "insufficient_sample" | "unavailable";
@@ -54,10 +57,13 @@ export { median };
 // add new information here; Resolution SLA below covers the closed set.
 export async function getResponseSla(): Promise<SlaMetric> {
   const now = new Date();
-  const tickets = await prisma.ticketSnapshot.findMany({
-    where: { respondByAt: { not: null } },
-    select: { openedAt: true, respondByAt: true, respondedAt: true },
-  });
+  const [tickets, { minSlaSample }] = await Promise.all([
+    prisma.ticketSnapshot.findMany({
+      where: { respondByAt: { not: null } },
+      select: { openedAt: true, respondByAt: true, respondedAt: true },
+    }),
+    getKpiSettings(),
+  ]);
 
   let met = 0;
   let eligible = 0;
@@ -86,7 +92,7 @@ export async function getResponseSla(): Promise<SlaMetric> {
   }
 
   if (eligible === 0) return { status: "unavailable", pct: null, met, eligible, medianHours: median(responseHours) };
-  if (eligible < MIN_SLA_SAMPLE) {
+  if (eligible < minSlaSample) {
     return { status: "insufficient_sample", pct: null, met, eligible, medianHours: median(responseHours) };
   }
   return {
@@ -100,11 +106,12 @@ export async function getResponseSla(): Promise<SlaMetric> {
 
 // Resolution SLA: covers TicketCloseLog rows from a rolling recent
 // window (not "today only" — a single day of closes is almost always
-// too small a sample, see MIN_SLA_SAMPLE) with a fixByAt target.
-const RESOLUTION_WINDOW_DAYS = 30;
-
+// too small a sample, see minSlaSample) with a fixByAt target. Window
+// length and sample floor are both admin-editable (Phase 12,
+// KpiSettings.resolutionWindowDays/minSlaSample).
 export async function getResolutionSla(): Promise<SlaMetric> {
-  const windowStart = new Date(Date.now() - RESOLUTION_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const { resolutionWindowDays, minSlaSample } = await getKpiSettings();
+  const windowStart = new Date(Date.now() - resolutionWindowDays * 24 * 60 * 60 * 1000);
   const closed = await prisma.ticketCloseLog.findMany({
     where: { closedAt: { gte: windowStart }, fixByAt: { not: null } },
     select: { openedAt: true, fixByAt: true, closedAt: true },
@@ -120,7 +127,7 @@ export async function getResolutionSla(): Promise<SlaMetric> {
 
   const eligible = closed.length;
   if (eligible === 0) return { status: "unavailable", pct: null, met, eligible, medianHours: null };
-  if (eligible < MIN_SLA_SAMPLE) {
+  if (eligible < minSlaSample) {
     return { status: "insufficient_sample", pct: null, met, eligible, medianHours: median(resolutionHours) };
   }
   return {
@@ -189,16 +196,19 @@ export type HealthScoreResult = {
   categories: HealthScoreCategory[];
 };
 
-// Base weights match the discovery report's proposal (Responsiveness 25,
-// Resolution 20, Customer Experience 20, Workload 20, Phone 15) with
-// Customer Experience removed (CSAT confirmed unavailable on this
-// HaloPSA account — see the Phase 1-3 discovery report) and its 20%
-// redistributed proportionally across the remaining four so they still
-// sum to 100%. This is a judgment call, not a cited formula — the score
-// is always shown with its full category breakdown (see
-// HealthScoreCategory), never as a bare number, per "never display a
-// mystery score."
-const BASE_WEIGHTS = { responsiveness: 25, resolution: 20, workload: 20, phone: 15 } as const;
+// Base weights default to the discovery report's original proposal
+// (Responsiveness 25, Resolution 20, Customer Experience 20, Workload
+// 20, Phone 15) with Customer Experience removed (CSAT confirmed
+// unavailable on this HaloPSA account — see the Phase 1-3 discovery
+// report) and its 20% redistributed proportionally across the remaining
+// four so they still sum to 100%. Now admin-editable (Phase 12, see
+// lib/services/kpiSettings.ts's KpiSettings.healthWeight* fields and
+// /admin) — the defaults below only matter as a fallback shape, the real
+// values come from whatever computeHealthScore's `weights` argument
+// carries. The score is always shown with its full category breakdown
+// (see HealthScoreCategory), never as a bare number, per "never display
+// a mystery score."
+type HealthScoreWeights = { responsiveness: number; resolution: number; workload: number; phone: number };
 
 function workloadScore(net: NetTicketChange, aging: TechActionableAging): number {
   let score = 100;
@@ -213,6 +223,9 @@ function computeHealthScore(
   net: NetTicketChange,
   aging: TechActionableAging,
   answerRate: { status: "available" | "unavailable"; pct: number | null },
+  weights: HealthScoreWeights,
+  minSlaSample: number,
+  resolutionWindowDays: number,
 ): HealthScoreResult {
   const raw: { key: HealthScoreCategory["key"]; label: string; score: number | null; detail: string }[] = [
     {
@@ -223,7 +236,7 @@ function computeHealthScore(
         responseSla.status === "available"
           ? `${responseSla.met}/${responseSla.eligible} tickets met their response target`
           : responseSla.status === "insufficient_sample"
-            ? `Only ${responseSla.eligible} eligible tickets — below the ${MIN_SLA_SAMPLE}-ticket minimum sample`
+            ? `Only ${responseSla.eligible} eligible tickets — below the ${minSlaSample}-ticket minimum sample`
             : "No tickets with a response target yet",
     },
     {
@@ -232,9 +245,9 @@ function computeHealthScore(
       score: resolutionSla.status === "available" ? resolutionSla.pct : null,
       detail:
         resolutionSla.status === "available"
-          ? `${resolutionSla.met}/${resolutionSla.eligible} tickets closed in the last ${RESOLUTION_WINDOW_DAYS} days met their resolution target`
+          ? `${resolutionSla.met}/${resolutionSla.eligible} tickets closed in the last ${resolutionWindowDays} days met their resolution target`
           : resolutionSla.status === "insufficient_sample"
-            ? `Only ${resolutionSla.eligible} eligible closures in ${RESOLUTION_WINDOW_DAYS} days — below the ${MIN_SLA_SAMPLE}-ticket minimum sample`
+            ? `Only ${resolutionSla.eligible} eligible closures in ${resolutionWindowDays} days — below the ${minSlaSample}-ticket minimum sample`
             : "No closed tickets with a resolution target in the window yet",
     },
     {
@@ -252,7 +265,7 @@ function computeHealthScore(
   ];
 
   const available = raw.filter((c) => c.score !== null);
-  const baseWeightSum = available.reduce((sum, c) => sum + BASE_WEIGHTS[c.key], 0);
+  const baseWeightSum = available.reduce((sum, c) => sum + weights[c.key], 0);
 
   const categories: HealthScoreCategory[] = raw.map((c) => ({
     key: c.key,
@@ -261,7 +274,7 @@ function computeHealthScore(
     // e.g. Phone being unavailable (no calls yet) doesn't silently zero
     // out 15% of the score — it's excluded and the rest sum to 100%.
     weightPct:
-      c.score === null ? 0 : baseWeightSum > 0 ? Math.round((BASE_WEIGHTS[c.key] / baseWeightSum) * 1000) / 10 : 0,
+      c.score === null ? 0 : baseWeightSum > 0 ? Math.round((weights[c.key] / baseWeightSum) * 1000) / 10 : 0,
     score: c.score,
     detail: c.detail,
   }));
@@ -278,7 +291,7 @@ function computeHealthScore(
 export async function getServiceDeskHealthSnapshot(): Promise<ServiceDeskHealthSnapshot> {
   const directory = await getContactDirectory().catch(() => null);
 
-  const [netTicketChange, responseSla, resolutionSla, backlog, aging, staleTickets, callSummary] = await Promise.all([
+  const [netTicketChange, responseSla, resolutionSla, backlog, aging, staleTickets, callSummary, settings] = await Promise.all([
     getNetTicketChange(),
     getResponseSla(),
     getResolutionSla(),
@@ -286,6 +299,7 @@ export async function getServiceDeskHealthSnapshot(): Promise<ServiceDeskHealthS
     getTechActionableAging(),
     getStaleTickets(),
     getCallActivitySummary(directory),
+    getKpiSettings(),
   ]);
 
   // Same inbound-only framing as Business Health's kpiAnswerRate — see
@@ -301,7 +315,21 @@ export async function getServiceDeskHealthSnapshot(): Promise<ServiceDeskHealthS
           total: callSummary.inboundToday,
         };
 
-  const healthScore = computeHealthScore(responseSla, resolutionSla, netTicketChange, aging, answerRate);
+  const healthScore = computeHealthScore(
+    responseSla,
+    resolutionSla,
+    netTicketChange,
+    aging,
+    answerRate,
+    {
+      responsiveness: settings.healthWeightResponsiveness,
+      resolution: settings.healthWeightResolution,
+      workload: settings.healthWeightWorkload,
+      phone: settings.healthWeightPhone,
+    },
+    settings.minSlaSample,
+    settings.resolutionWindowDays,
+  );
 
   return {
     netTicketChange,
@@ -422,8 +450,8 @@ export function slaStatusColor(metric: SlaMetric, green: number, yellow: number)
   return bandHigherIsBetter(metric.pct, green, yellow);
 }
 
-export function agingStatusColor(aging: TechActionableAging): KpiStatus {
-  return bandLowerIsBetter(aging.agingOver24h, 0, 4);
+export function agingStatusColor(aging: TechActionableAging, green: number, yellow: number): KpiStatus {
+  return bandLowerIsBetter(aging.agingOver24h, green, yellow);
 }
 
 function slaDisplay(metric: SlaMetric): string {
@@ -432,13 +460,13 @@ function slaDisplay(metric: SlaMetric): string {
   return "—";
 }
 
-function slaDetail(metric: SlaMetric, noun: string): string {
+function slaDetail(metric: SlaMetric, noun: string, minSlaSample: number): string {
   if (metric.status === "available") {
     const medianText = metric.medianHours !== null ? ` · median ${Math.round(metric.medianHours * 10) / 10}h` : "";
     return `${metric.met} of ${metric.eligible} ${noun} met target${medianText}`;
   }
   if (metric.status === "insufficient_sample") {
-    return `Only ${metric.eligible} eligible ${noun} — below the ${MIN_SLA_SAMPLE}-ticket minimum sample`;
+    return `Only ${metric.eligible} eligible ${noun} — below the ${minSlaSample}-ticket minimum sample`;
   }
   return `No ${noun} with a target yet`;
 }
@@ -497,7 +525,11 @@ export function getHealthScoreTrend(healthScore: HealthScoreResult, weekAgo: Ser
 // Aging — copy-pasting one direction across all four would color a
 // worsening Aging trend green, exactly what "don't use generic trend
 // colouring" warns against.
-export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot, weekAgo?: ServiceDeskHealthDaily | null): Kpi[] {
+export function getServiceDeskHealthKpis(
+  s: ServiceDeskHealthSnapshot,
+  weekAgo: ServiceDeskHealthDaily | null | undefined,
+  settings: KpiSettings,
+): Kpi[] {
   const prior = weekAgo ?? null;
   const responseSlaTrend: KpiTrend | undefined =
     s.responseSla.pct !== null ? buildTrend(s.responseSla.pct, prior?.responseSlaPct ?? null, "up", pctDelta) : undefined;
@@ -515,8 +547,8 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot, weekAgo?:
       label: "Response SLA",
       value: s.responseSla.pct,
       display: slaDisplay(s.responseSla),
-      status: slaStatusColor(s.responseSla, 90, 75),
-      detail: slaDetail(s.responseSla, "open tickets"),
+      status: slaStatusColor(s.responseSla, settings.responseSlaGreenPct, settings.responseSlaYellowPct),
+      detail: slaDetail(s.responseSla, "open tickets", settings.minSlaSample),
       benchmark: "default target 90%, not a universal industry figure",
       href: "/operations",
       trend: responseSlaTrend,
@@ -526,8 +558,8 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot, weekAgo?:
       label: "Resolution SLA",
       value: s.resolutionSla.pct,
       display: slaDisplay(s.resolutionSla),
-      status: slaStatusColor(s.resolutionSla, 90, 75),
-      detail: slaDetail(s.resolutionSla, `closures in ${RESOLUTION_WINDOW_DAYS}d`),
+      status: slaStatusColor(s.resolutionSla, settings.resolutionSlaGreenPct, settings.resolutionSlaYellowPct),
+      detail: slaDetail(s.resolutionSla, `closures in ${settings.resolutionWindowDays}d`, settings.minSlaSample),
       benchmark: "default target 90%, not a universal industry figure",
       href: "/operations",
       trend: resolutionSlaTrend,
@@ -537,7 +569,7 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot, weekAgo?:
       label: "Tech-Actionable Aging",
       value: s.aging.agingOver24h,
       display: `${s.aging.agingOver24h}`,
-      status: agingStatusColor(s.aging),
+      status: agingStatusColor(s.aging, settings.agingGreenCount, settings.agingYellowCount),
       detail: `${s.aging.byBucket["1-3d"]} 1-3d · ${s.aging.byBucket["3-7d"]} 3-7d · ${s.aging.byBucket["7d+"]} 7d+ · excludes tickets waiting on the customer/vendor`,
       benchmark: "0 aging past 24 business hours is healthy",
       href: "/operations",
@@ -548,7 +580,10 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot, weekAgo?:
       label: "Call Answer Rate",
       value: s.answerRate.pct,
       display: s.answerRate.status === "available" ? `${Math.round(s.answerRate.pct!)}%` : "—",
-      status: s.answerRate.status === "available" ? bandHigherIsBetter(s.answerRate.pct!, 90, 80) : "unavailable",
+      status:
+        s.answerRate.status === "available"
+          ? bandHigherIsBetter(s.answerRate.pct!, settings.answerRateGreenPct, settings.answerRateYellowPct)
+          : "unavailable",
       detail:
         s.answerRate.status === "available"
           ? `${s.answerRate.answered} of ${s.answerRate.total} inbound calls answered today`
@@ -571,6 +606,7 @@ export type SlaAtRiskTicket = {
   id: string;
   haloTicketId: string;
   clientName: string | null;
+  summary: string;
   priority: TicketPriority;
   assignedTech: string;
   slaType: "response" | "resolution";
@@ -616,6 +652,7 @@ export async function getSlaAtRiskTickets(): Promise<SlaAtRiskTicket[]> {
         id: t.id,
         haloTicketId: t.haloTicketId,
         clientName: t.clientName,
+        summary: t.summary,
         priority: t.priority,
         assignedTech: t.assignedTech,
         slaType: "response",
@@ -628,6 +665,7 @@ export async function getSlaAtRiskTickets(): Promise<SlaAtRiskTicket[]> {
         id: t.id,
         haloTicketId: t.haloTicketId,
         clientName: t.clientName,
+        summary: t.summary,
         priority: t.priority,
         assignedTech: t.assignedTech,
         slaType: "resolution",
