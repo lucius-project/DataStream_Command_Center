@@ -394,6 +394,68 @@ model TicketLoadWeekly {
   @@index([person])
 }
 
+// Daily snapshot of the Service Desk Health Score and the headline KPIs
+// it's built from — Phase 10 (Trends). Unlike ServiceDeskHealthSnapshot
+// (always recomputed live from current TicketSnapshot/TicketCloseLog
+// state, see serviceDeskHealth.ts), this is the one place that state gets
+// frozen so a later day can show a real "vs 7 days ago" trend and a
+// history chart. One row per calendar day, upserted on every page load
+// (see syncServiceDeskHealthDaily) — same cost profile as
+// TicketLoadWeekly, since every field here is already computed by
+// getServiceDeskHealthSnapshot before this write happens, no new query or
+// external call. Builds up honestly from whenever this shipped forward —
+// no backfilled history, same "label by the actual window, don't fake
+// depth" approach as TicketLoadWeekly/ClientMonthlyHours. All score
+// fields are nullable because computeHealthScore's own categories can be
+// null when a category has no data yet (see HealthScoreCategory) — a
+// missing score here means "unavailable that day," not zero.
+model ServiceDeskHealthDaily {
+  id                  String   @id @default(cuid())
+  date                DateTime @unique
+
+  healthScore         Int?
+  responsivenessScore Int?
+  resolutionScore     Int?
+  workloadScore       Int?
+  phoneScore          Int?
+
+  responseSlaPct      Float?
+  resolutionSlaPct    Float?
+  ticketsCreated      Int
+  ticketsClosed       Int
+  netChange           Int
+  backlogTotal        Int
+  agingOver24h        Int
+  phoneAnswerRatePct  Float?
+
+  updatedAt           DateTime @updatedAt
+}
+
+// Daily snapshot of each technician's Performance Score — the per-tech
+// counterpart to ServiceDeskHealthDaily above, same rules: one row per
+// (person, date), upserted on every page load from a score
+// computeTechPerformanceScore already produced (see syncTechScoreDaily in
+// techPerformanceScore.ts), never backfilled, nullable score fields
+// because a category can be null when it has no data yet (see
+// TechScoreCategory).
+model TechScoreDaily {
+  id                   String   @id @default(cuid())
+  person               String
+  date                 DateTime
+
+  score                Int?
+  serviceDeliveryScore Int?
+  qualityScore         Int?
+  productivityScore    Int?
+  workManagementScore  Int?
+  phoneScore           Int?
+
+  updatedAt            DateTime @updatedAt
+
+  @@unique([person, date])
+  @@index([person])
+}
+
 // ---------------------------------------------------------------------------
 // Shared delegation log (Inbox Command + Operations)
 // ---------------------------------------------------------------------------

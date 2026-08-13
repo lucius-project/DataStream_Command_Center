@@ -3,7 +3,12 @@ import { syncCallActivity } from "@/lib/integrations/unitedCloud";
 import { syncRemoteSessions } from "@/lib/integrations/ninjaRmm";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import { getTechPerformance, getTechOrgKpis, syncTicketLoadHistory } from "@/lib/services/techPerformance";
-import { getServiceDeskHealthSnapshot, getSlaAtRiskTickets } from "@/lib/services/serviceDeskHealth";
+import {
+  getServiceDeskHealthSnapshot,
+  getSlaAtRiskTickets,
+  syncServiceDeskHealthDaily,
+  getServiceDeskHealthWeekAgo,
+} from "@/lib/services/serviceDeskHealth";
 import { generateManagerAlerts } from "@/lib/services/managerAlerts";
 import { getStaleTickets } from "@/lib/services/operations";
 import { getRemoteSessionAnalytics, type TechRemoteSummary } from "@/lib/services/remoteSessions";
@@ -28,10 +33,14 @@ import {
   bucketStaleTicketsByTech,
   buildTechCardTicketData,
   computeTechPerformanceScore,
+  syncTechScoreDaily,
+  getTechScoreWeekAgo,
+  getTechScoreTrendArrow,
   roleFor,
   serviceMetricsFor,
   ticketsFor,
   staleTicketsFor,
+  type TechPerformanceScoreResult,
 } from "@/lib/services/techPerformanceScore";
 import { TechPerformanceRow } from "@/components/tech-performance/TechPerformanceRow";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
@@ -52,13 +61,23 @@ export default async function TechPerformancePage() {
   // so both this week's TicketLoadWeekly snapshot and the new Service
   // Desk Health section reflect freshly-synced ticket data, not whatever
   // was on disk before this page load.
-  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk] = await Promise.all([
+  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo] = await Promise.all([
     syncTicketLoadHistory(),
     getContactDirectory().catch(() => null),
     getServiceDeskHealthSnapshot(),
     getSlaAtRiskTickets(),
+    getServiceDeskHealthWeekAgo(),
   ]);
-  const { techs, org, todayIndex, lastWeek } = await getTechPerformance(directory);
+  // Freezes today's already-computed healthSnapshot into
+  // ServiceDeskHealthDaily (Phase 10) — a pure DB upsert on values
+  // already in hand, no new query, so it runs alongside getTechPerformance
+  // rather than serialized after it.
+  const [{ techs, org, todayIndex, lastWeek }, healthDailySyncError] = await Promise.all([
+    getTechPerformance(directory),
+    syncServiceDeskHealthDaily(healthSnapshot)
+      .then(() => null)
+      .catch((e: unknown) => (e instanceof Error ? e.message : "Service Desk Health history sync failed.")),
+  ]);
   const orgKpis = getTechOrgKpis(techs, org, lastWeek);
 
   // Fetched once here and reused by both the per-tech Performance Score
@@ -86,6 +105,30 @@ export default async function TechPerformancePage() {
   const timeCoverageByTech = await getTimeCoverage(interactionByTech);
   const staleByTech = bucketStaleTicketsByTech(staleTickets);
   const serviceMetricsByTech = await getTechServiceMetrics(staleTickets);
+  // Hoisted out of the per-tech render loop (Phase 10) so each tech's
+  // already-computed score can also be frozen into TechScoreDaily below,
+  // rather than being recomputed a second time or written to the DB from
+  // inside JSX-adjacent code — same "sync happens up top, render reads
+  // already-computed data" structure this page uses everywhere else.
+  const scoreByTech = new Map<Tech, TechPerformanceScoreResult>(
+    techs.map((tech) => [
+      tech.person as Tech,
+      computeTechPerformanceScore(tech, serviceMetricsFor(serviceMetricsByTech, tech.person), roleFor(tech.person)),
+    ]),
+  );
+  const techScoreSyncError = await Promise.all(
+    techs.map((tech) => syncTechScoreDaily(tech.person, scoreByTech.get(tech.person as Tech)!)),
+  )
+    .then(() => null)
+    .catch((e: unknown) => (e instanceof Error ? e.message : "Technician score history sync failed."));
+  // "vs 7d ago" arrow on each tech's score badge — a separate read from
+  // the write above (needs last week's row, not today's), same
+  // "omit rather than fabricate" rule as getServiceDeskHealthWeekAgo.
+  const techScoreWeekAgoByTech = new Map(
+    await Promise.all(
+      techs.map(async (tech) => [tech.person as Tech, await getTechScoreWeekAgo(tech.person)] as const),
+    ),
+  );
   const remoteByTech = new Map<Tech, TechRemoteSummary>(remoteAnalytics.byTech.map((r) => [r.tech, r]));
   // Sum of each tech's own pro-rated expectedHoursToDate (techPerformance.ts)
   // rather than a second weekFraction computation here — one source of
@@ -107,6 +150,8 @@ export default async function TechPerformancePage() {
     callSync.error && `United Cloud: ${callSync.error}`,
     ticketLoadSync.error && `Ticket load history: ${ticketLoadSync.error}`,
     remoteSessionSync.error && `NinjaOne: ${remoteSessionSync.error}`,
+    healthDailySyncError && `Trend history: ${healthDailySyncError}`,
+    techScoreSyncError && `Trend history: ${techScoreSyncError}`,
   ].filter((e): e is string => Boolean(e));
 
   return (
@@ -125,7 +170,7 @@ export default async function TechPerformancePage() {
       )}
 
       <div className="mt-6">
-        <ServiceDeskHealthSection snapshot={healthSnapshot} />
+        <ServiceDeskHealthSection snapshot={healthSnapshot} weekAgo={healthWeekAgo} />
       </div>
 
       <div className="mt-6">
@@ -162,7 +207,8 @@ export default async function TechPerformancePage() {
         {techs.map((tech) => {
           const role = roleFor(tech.person);
           const serviceMetrics = serviceMetricsFor(serviceMetricsByTech, tech.person);
-          const scoreResult = computeTechPerformanceScore(tech, serviceMetrics, role);
+          const scoreResult = scoreByTech.get(tech.person as Tech)!;
+          const scoreTrend = getTechScoreTrendArrow(scoreResult.score, techScoreWeekAgoByTech.get(tech.person as Tech) ?? null);
           const cardData = buildTechCardTicketData(
             ticketsFor(ticketsByTech, tech.person),
             staleTicketsFor(staleByTech, tech.person),
@@ -206,6 +252,7 @@ export default async function TechPerformancePage() {
               todayIndex={todayIndex}
               role={role}
               scoreResult={scoreResult}
+              scoreTrend={scoreTrend}
               serviceMetrics={serviceMetrics}
               cardData={cardData}
               remote={remote}

@@ -503,7 +503,10 @@ function deriveTechStatus(t: {
 // than forcing an arrow onto noise. `previous === null` (no honest prior
 // figure — see TechOrgLastWeek) omits the trend entirely rather than a
 // fabricated "flat".
-function buildTrend(
+// Exported for reuse by serviceDeskHealth.ts's own period-over-period
+// KPI trends (Phase 10) — same delta/direction/omit-when-no-prior rule,
+// one implementation rather than a second copy.
+export function buildTrend(
   current: number,
   previous: number | null,
   goodDirection: "up" | "down",

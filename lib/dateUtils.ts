@@ -3,6 +3,16 @@
 // Team Time Gaps sync, so a synced row always lines up with what a fresh
 // seed would have produced for the same week.
 
+// Midnight-normalized today — shared by anything upserting a "one row
+// per calendar day" table (ServiceDeskHealthDaily, TechScoreDaily), so
+// the same instant is used as the unique key wherever "today" means a
+// calendar day, not a moving 24h window.
+export function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 export function startOfWeek(): Date {
   const d = new Date();
   const day = d.getDay();

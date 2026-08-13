@@ -1,7 +1,8 @@
 import { KpiTile } from "@/components/business-health/KpiTile";
 import { LockedStrip } from "@/components/business-health/LockedStrip";
 import type { ServiceDeskHealthSnapshot } from "@/lib/services/serviceDeskHealth";
-import { getServiceDeskHealthKpis } from "@/lib/services/serviceDeskHealth";
+import { getServiceDeskHealthKpis, getHealthScoreTrend } from "@/lib/services/serviceDeskHealth";
+import type { ServiceDeskHealthDaily } from "@/app/generated/prisma/client";
 import { HealthScoreTile } from "./HealthScoreTile";
 import { NetTicketChangeTile } from "./NetTicketChangeTile";
 import { BacklogBreakdownPanel } from "./BacklogBreakdownPanel";
@@ -22,8 +23,18 @@ const LOCKED_KPIS = [
 // Level 1 of the /tech-performance rebuild — the answer to "what does
 // the Service Desk Manager need to know right now," above everything
 // else on the page (org KPI strip, per-tech cards).
-export function ServiceDeskHealthSection({ snapshot }: { snapshot: ServiceDeskHealthSnapshot }) {
-  const kpis = getServiceDeskHealthKpis(snapshot);
+export function ServiceDeskHealthSection({
+  snapshot,
+  weekAgo,
+}: {
+  snapshot: ServiceDeskHealthSnapshot;
+  // ServiceDeskHealthDaily row from 7 days ago, or null before this
+  // table has that much history yet (see its schema comment) — powers
+  // every tile's "vs 7d ago" trend arrow, omitted (not faked) when null.
+  weekAgo: ServiceDeskHealthDaily | null;
+}) {
+  const kpis = getServiceDeskHealthKpis(snapshot, weekAgo);
+  const healthScoreTrend = getHealthScoreTrend(snapshot.healthScore, weekAgo);
 
   return (
     <div className="flex flex-col gap-3">
@@ -31,7 +42,7 @@ export function ServiceDeskHealthSection({ snapshot }: { snapshot: ServiceDeskHe
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
         <div className="col-span-2">
-          <HealthScoreTile result={snapshot.healthScore} />
+          <HealthScoreTile result={snapshot.healthScore} trend={healthScoreTrend} />
         </div>
         <div className="col-span-2">
           <NetTicketChangeTile net={snapshot.netTicketChange} />

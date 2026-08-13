@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { X } from "lucide-react";
+import { X, TrendingUp } from "lucide-react";
 import type { TechPerformanceScoreResult } from "@/lib/services/techPerformanceScore";
+import type { KpiTrend } from "@/lib/services/businessHealth";
+import { TechScoreTrendModal } from "./TechScoreTrendModal";
 
 function scoreColor(score: number | null): string {
   if (score === null) return "text-text-faint";
@@ -11,24 +13,61 @@ function scoreColor(score: number | null): string {
   return "text-status-critical";
 }
 
+// Same arrow glyph/color logic as KpiTile.tsx / HealthScoreTile.tsx —
+// rendered inline rather than routed through the Kpi type, same reason.
+const TREND_ARROW = { up: "↑", down: "↓", flat: "→" } as const;
+
+function trendColorClass(trend: KpiTrend): string {
+  if (trend.direction === "flat") return "text-text-faint";
+  return trend.direction === trend.goodDirection ? "text-status-ok" : "text-status-critical";
+}
+
 // Compact per-tech version of Service Desk Health's HealthScoreTile —
-// same "never display a mystery score" rule: the badge itself is a
-// button that opens the exact category breakdown behind the number.
-export function TechScoreBadge({ person, result }: { person: string; result: TechPerformanceScoreResult }) {
+// same "never display a mystery score" rule and same "trend button is a
+// true sibling, not nested inside the breakdown button" structure (see
+// HealthScoreTile.tsx's own comment on why the outer element is a plain
+// div rather than the button itself).
+export function TechScoreBadge({
+  person,
+  result,
+  trend,
+}: {
+  person: string;
+  result: TechPerformanceScoreResult;
+  trend?: KpiTrend;
+}) {
   const [open, setOpen] = useState(false);
+  const [trendOpen, setTrendOpen] = useState(false);
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="flex shrink-0 items-baseline gap-1 rounded border border-border-strong px-2 py-1 hover:border-accent"
-      >
-        <span className={`font-display text-sm font-semibold ${scoreColor(result.score)}`}>
-          {result.score !== null ? result.score : "—"}
-        </span>
-        <span className="font-data text-[10px] text-text-faint">/100</span>
-      </button>
+      <div className="group relative flex shrink-0 items-center">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex items-baseline gap-1 rounded border border-border-strong py-1 pr-5 pl-2 hover:border-accent"
+        >
+          <span className={`font-display text-sm font-semibold ${scoreColor(result.score)}`}>
+            {result.score !== null ? result.score : "—"}
+          </span>
+          <span className="font-data text-[10px] text-text-faint">/100</span>
+          {trend && (
+            <span className={`font-data text-[10px] font-medium ${trendColorClass(trend)}`}>
+              {TREND_ARROW[trend.direction]}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          aria-label={`View ${person}'s performance score trend`}
+          onClick={() => setTrendOpen(true)}
+          className="absolute right-1 rounded p-0.5 text-text-faint hover:bg-panel-raised hover:text-text"
+        >
+          <TrendingUp size={11} />
+        </button>
+      </div>
+
+      {trendOpen && <TechScoreTrendModal person={person} onClose={() => setTrendOpen(false)} />}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

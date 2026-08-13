@@ -12,6 +12,7 @@ import type {
 import type { TechRemoteSummary } from "@/lib/services/remoteSessions";
 import type { TechTimeCoverageSummary } from "@/lib/services/activityCorrelation";
 import type { TimelineEntry } from "@/lib/services/activityCorrelation";
+import type { KpiTrend } from "@/lib/services/businessHealth";
 import { Stat, GroupLabel, StatusPill, DailyHoursBars } from "./shared";
 import { DrilldownStat } from "./DrilldownStat";
 import { TechScoreBadge } from "./TechScoreBadge";
@@ -108,6 +109,7 @@ export function TechPerformanceRow({
   todayIndex,
   role,
   scoreResult,
+  scoreTrend,
   serviceMetrics,
   cardData,
   remote,
@@ -121,6 +123,10 @@ export function TechPerformanceRow({
   todayIndex: number;
   role: TechRole;
   scoreResult: TechPerformanceScoreResult;
+  // "vs 7d ago" trend on the Performance Score badge (Phase 10) — omitted
+  // (not fabricated) until TechScoreDaily has 7+ days of real history,
+  // see getTechScoreTrendArrow's own comment.
+  scoreTrend?: KpiTrend;
   serviceMetrics: TechServiceMetrics;
   // Pre-computed server-side (see buildTechCardTicketData in
   // techPerformanceScore.ts) — every "how old is this ticket"
@@ -154,7 +160,7 @@ export function TechPerformanceRow({
         <div className="flex items-center gap-3">
           <Sparkline trend={tech.trend} />
           <ActivityTimelineModal techLabel={tech.person} entries={timelineEntries} />
-          <TechScoreBadge person={tech.person} result={scoreResult} />
+          <TechScoreBadge person={tech.person} result={scoreResult} trend={scoreTrend} />
           <StatusPill status={tech.status} />
         </div>
       </div>

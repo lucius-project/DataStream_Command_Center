@@ -13,20 +13,15 @@
 // substituted for an outcome that isn't actually measurable yet.
 
 import { prisma } from "@/lib/prisma";
-import type { TicketPriority } from "@/app/generated/prisma/client";
-import { businessHoursElapsed } from "@/lib/dateUtils";
+import type { TicketPriority, ServiceDeskHealthDaily } from "@/app/generated/prisma/client";
+import { businessHoursElapsed, startOfToday } from "@/lib/dateUtils";
 import { bandHigherIsBetter, bandLowerIsBetter, type KpiStatus } from "@/lib/kpiStatus";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
-import type { Kpi } from "./businessHealth";
+import type { Kpi, KpiTrend } from "./businessHealth";
 import { getCallActivitySummary } from "./callActivity";
 import { getBacklogBreakdown, getTechActionableAging, getStaleTickets, type BacklogBreakdown, type TechActionableAging } from "./operations";
+import { buildTrend } from "./techPerformance";
 import { median } from "./stats";
-
-function startOfToday(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 // Below this many eligible tickets, a percentage is misleadingly precise
 // (1 of 1 = "100%") — same principle as CSAT's sample-count problem
@@ -314,6 +309,108 @@ export async function getServiceDeskHealthSnapshot(): Promise<ServiceDeskHealthS
   };
 }
 
+const HEALTH_TREND_DAYS = 30;
+const TREND_DAY_LABEL = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+
+export type ServiceDeskHealthTrendDay = {
+  date: string; // "YYYY-MM-DD", sortable as a string
+  label: string; // "Aug 12"
+  // null (not 0) when no ServiceDeskHealthDaily row exists for that day —
+  // a day before this table started being written isn't the same claim
+  // as "score 0", same honesty pattern as CallAnswerRateTrend's monthly
+  // stats (callActivity.ts).
+  healthScore: number | null;
+};
+
+export type ServiceDeskHealthTrend = {
+  // Oldest first, HEALTH_TREND_DAYS fixed entries (today last) — always
+  // this length regardless of how much real history exists yet, same
+  // "fixed window, null for missing days" shape getCallAnswerRateTrend
+  // already uses for its 12-month array.
+  days: ServiceDeskHealthTrendDay[];
+};
+
+function dateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+// DB-only — reads whatever ServiceDeskHealthDaily rows exist in the
+// window (see that model's schema comment: never backfilled, builds
+// forward from whenever this shipped) and left-joins them onto a fixed
+// HEALTH_TREND_DAYS-day calendar so the trend modal always has a
+// consistent axis to render, same pattern as getCallAnswerRateTrend.
+export async function getServiceDeskHealthTrend(): Promise<ServiceDeskHealthTrend> {
+  const today = startOfToday();
+  const windowStart = new Date(today);
+  windowStart.setDate(windowStart.getDate() - (HEALTH_TREND_DAYS - 1));
+
+  const rows = await prisma.serviceDeskHealthDaily.findMany({
+    where: { date: { gte: windowStart, lte: today } },
+    select: { date: true, healthScore: true },
+  });
+  const scoreByDate = new Map(rows.map((r) => [dateKey(r.date), r.healthScore]));
+
+  const days: ServiceDeskHealthTrendDay[] = [];
+  for (let i = 0; i < HEALTH_TREND_DAYS; i++) {
+    const d = new Date(windowStart);
+    d.setDate(d.getDate() + i);
+    const key = dateKey(d);
+    days.push({ date: key, label: TREND_DAY_LABEL.format(d), healthScore: scoreByDate.get(key) ?? null });
+  }
+
+  return { days };
+}
+
+function categoryScore(healthScore: HealthScoreResult, key: HealthScoreCategory["key"]): number | null {
+  return healthScore.categories.find((c) => c.key === key)?.score ?? null;
+}
+
+// Freezes today's already-computed ServiceDeskHealthSnapshot into
+// ServiceDeskHealthDaily — no new query, no external call, just an
+// upsert on values the caller already has (see that model's schema
+// comment for why this table exists and its no-backfill rule). Upserted
+// by date, so repeat page loads the same day overwrite in place rather
+// than accumulating duplicate rows.
+export async function syncServiceDeskHealthDaily(snapshot: ServiceDeskHealthSnapshot): Promise<void> {
+  const date = startOfToday();
+  const { healthScore } = snapshot;
+
+  await prisma.serviceDeskHealthDaily.upsert({
+    where: { date },
+    update: {
+      healthScore: healthScore.score,
+      responsivenessScore: categoryScore(healthScore, "responsiveness"),
+      resolutionScore: categoryScore(healthScore, "resolution"),
+      workloadScore: categoryScore(healthScore, "workload"),
+      phoneScore: categoryScore(healthScore, "phone"),
+      responseSlaPct: snapshot.responseSla.pct,
+      resolutionSlaPct: snapshot.resolutionSla.pct,
+      ticketsCreated: snapshot.netTicketChange.createdToday,
+      ticketsClosed: snapshot.netTicketChange.closedToday,
+      netChange: snapshot.netTicketChange.net,
+      backlogTotal: snapshot.backlog.total,
+      agingOver24h: snapshot.aging.agingOver24h,
+      phoneAnswerRatePct: snapshot.answerRate.pct,
+    },
+    create: {
+      date,
+      healthScore: healthScore.score,
+      responsivenessScore: categoryScore(healthScore, "responsiveness"),
+      resolutionScore: categoryScore(healthScore, "resolution"),
+      workloadScore: categoryScore(healthScore, "workload"),
+      phoneScore: categoryScore(healthScore, "phone"),
+      responseSlaPct: snapshot.responseSla.pct,
+      resolutionSlaPct: snapshot.resolutionSla.pct,
+      ticketsCreated: snapshot.netTicketChange.createdToday,
+      ticketsClosed: snapshot.netTicketChange.closedToday,
+      netChange: snapshot.netTicketChange.net,
+      backlogTotal: snapshot.backlog.total,
+      agingOver24h: snapshot.aging.agingOver24h,
+      phoneAnswerRatePct: snapshot.answerRate.pct,
+    },
+  });
+}
+
 export function slaStatusColor(metric: SlaMetric, green: number, yellow: number): KpiStatus {
   if (metric.status !== "available" || metric.pct === null) return "unavailable";
   return bandHigherIsBetter(metric.pct, green, yellow);
@@ -340,12 +437,60 @@ function slaDetail(metric: SlaMetric, noun: string): string {
   return `No ${noun} with a target yet`;
 }
 
+// The ServiceDeskHealthDaily row from exactly 7 days ago, or null if
+// none exists yet (before this table has 7+ days of real history — see
+// its schema comment). Comparing to the same weekday rather than
+// "yesterday" avoids weekday-shape noise (a Monday's aging count is
+// naturally different from Friday's), same reasoning TechOrgLastWeek
+// already applies at the org level.
+export async function getServiceDeskHealthWeekAgo(): Promise<ServiceDeskHealthDaily | null> {
+  const weekAgo = startOfToday();
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  return prisma.serviceDeskHealthDaily.findUnique({ where: { date: weekAgo } });
+}
+
+function pctDelta(delta: number): string {
+  return `${delta >= 0 ? "+" : ""}${Math.round(delta * 10) / 10}pts vs 7d ago`;
+}
+
+function countDelta(delta: number): string {
+  return `${delta >= 0 ? "+" : ""}${Math.round(delta)} vs 7d ago`;
+}
+
+// Health Score isn't Kpi-shaped (see getServiceDeskHealthKpis' comment),
+// so its trend is computed separately here rather than folded into that
+// function, and rendered inline inside HealthScoreTile.tsx.
+export function getHealthScoreTrend(healthScore: HealthScoreResult, weekAgo: ServiceDeskHealthDaily | null): KpiTrend | undefined {
+  if (healthScore.score === null) return undefined;
+  return buildTrend(healthScore.score, weekAgo?.healthScore ?? null, "up", countDelta, 0);
+}
+
 // The four standard-shaped tiles (Response SLA, Resolution SLA, Aging,
 // Answer Rate) — Net Ticket Change and Health Score get their own
 // dedicated components instead (see components/service-desk/) since
 // "make this visually prominent" / "never a mystery score" both need
 // more than the generic KpiTile shape offers.
-export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot): Kpi[] {
+//
+// weekAgo is optional and, when provided, threads a `.trend` onto each
+// tile via buildTrend (techPerformance.ts) — the same "omit rather than
+// fabricate when there's no honest prior value" rule KpiTile already
+// renders correctly. Direction is set explicitly per metric, not
+// defaulted: higher is better for SLA/Answer Rate, lower is better for
+// Aging — copy-pasting one direction across all four would color a
+// worsening Aging trend green, exactly what "don't use generic trend
+// colouring" warns against.
+export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot, weekAgo?: ServiceDeskHealthDaily | null): Kpi[] {
+  const prior = weekAgo ?? null;
+  const responseSlaTrend: KpiTrend | undefined =
+    s.responseSla.pct !== null ? buildTrend(s.responseSla.pct, prior?.responseSlaPct ?? null, "up", pctDelta) : undefined;
+  const resolutionSlaTrend: KpiTrend | undefined =
+    s.resolutionSla.pct !== null ? buildTrend(s.resolutionSla.pct, prior?.resolutionSlaPct ?? null, "up", pctDelta) : undefined;
+  const agingTrend = buildTrend(s.aging.agingOver24h, prior?.agingOver24h ?? null, "down", countDelta, 0);
+  const answerRateTrend: KpiTrend | undefined =
+    s.answerRate.status === "available"
+      ? buildTrend(s.answerRate.pct!, prior?.phoneAnswerRatePct ?? null, "up", pctDelta)
+      : undefined;
+
   return [
     {
       key: "responseSla",
@@ -356,6 +501,7 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot): Kpi[] {
       detail: slaDetail(s.responseSla, "open tickets"),
       benchmark: "default target 90%, not a universal industry figure",
       href: "/operations",
+      trend: responseSlaTrend,
     },
     {
       key: "resolutionSla",
@@ -366,6 +512,7 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot): Kpi[] {
       detail: slaDetail(s.resolutionSla, `closures in ${RESOLUTION_WINDOW_DAYS}d`),
       benchmark: "default target 90%, not a universal industry figure",
       href: "/operations",
+      trend: resolutionSlaTrend,
     },
     {
       key: "techAging",
@@ -376,6 +523,7 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot): Kpi[] {
       detail: `${s.aging.byBucket["1-3d"]} 1-3d · ${s.aging.byBucket["3-7d"]} 3-7d · ${s.aging.byBucket["7d+"]} 7d+ · excludes tickets waiting on the customer/vendor`,
       benchmark: "0 aging past 24 business hours is healthy",
       href: "/operations",
+      trend: agingTrend,
     },
     {
       key: "answerRate",
@@ -389,6 +537,7 @@ export function getServiceDeskHealthKpis(s: ServiceDeskHealthSnapshot): Kpi[] {
           : "No inbound calls yet today",
       benchmark: "healthy range 90%+",
       href: "/calls",
+      trend: answerRateTrend,
     },
   ];
 }

@@ -35,12 +35,14 @@
 
 import { prisma } from "@/lib/prisma";
 import type { TicketSnapshot, TicketPriority } from "@/app/generated/prisma/client";
-import { businessHoursElapsed, startOfWeek } from "@/lib/dateUtils";
+import { businessHoursElapsed, startOfWeek, startOfToday } from "@/lib/dateUtils";
 import { matchKnownTech } from "@/lib/integrations/haloShared";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { OPEN_STATUSES, getStaleTickets, type StaleTicket } from "./operations";
 import { median } from "./serviceDeskHealth";
 import type { TechPerformance } from "./techPerformance";
+import { buildTrend } from "./techPerformance";
+import type { KpiTrend } from "./businessHealth";
 
 const MIN_SLA_SAMPLE = 5;
 const RESOLUTION_WINDOW_DAYS = 30;
@@ -399,6 +401,103 @@ export function computeTechPerformanceScore(
   const score = Math.round(categories.reduce((sum, c) => sum + (c.score !== null ? (c.score * c.weightPct) / 100 : 0), 0));
 
   return { score, categories };
+}
+
+function techScoreCategory(result: TechPerformanceScoreResult, key: TechScoreCategory["key"]): number | null {
+  return result.categories.find((c) => c.key === key)?.score ?? null;
+}
+
+// Freezes an already-computed TechPerformanceScoreResult into
+// TechScoreDaily (Phase 10) — same "no new query, no external call, just
+// an upsert on values the caller already has" rule as
+// syncServiceDeskHealthDaily (serviceDeskHealth.ts). Upserted by
+// (person, date), so repeat page loads the same day overwrite in place.
+export async function syncTechScoreDaily(person: string, result: TechPerformanceScoreResult): Promise<void> {
+  const date = startOfToday();
+  const scores = {
+    score: result.score,
+    serviceDeliveryScore: techScoreCategory(result, "serviceDelivery"),
+    qualityScore: techScoreCategory(result, "quality"),
+    productivityScore: techScoreCategory(result, "productivity"),
+    workManagementScore: techScoreCategory(result, "workManagement"),
+    phoneScore: techScoreCategory(result, "phone"),
+  };
+
+  await prisma.techScoreDaily.upsert({
+    where: { person_date: { person, date } },
+    update: scores,
+    create: { person, date, ...scores },
+  });
+}
+
+// The TechScoreDaily row from exactly 7 days ago for one tech, or null
+// before this table has that much history yet — same "same weekday, not
+// yesterday" reasoning as getServiceDeskHealthWeekAgo (serviceDeskHealth.ts).
+export async function getTechScoreWeekAgo(person: string): Promise<{ score: number | null } | null> {
+  const weekAgo = startOfToday();
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  return prisma.techScoreDaily.findUnique({
+    where: { person_date: { person, date: weekAgo } },
+    select: { score: true },
+  });
+}
+
+// "vs same day last week" rather than "vs yesterday" — a Monday's score
+// is naturally lower before the week's hours/tickets accumulate, same
+// reasoning TechOrgLastWeek already applies at the org level
+// (techPerformance.ts). Rendered inline in TechScoreBadge.tsx, same
+// pattern as getHealthScoreTrend in serviceDeskHealth.ts.
+export function getTechScoreTrendArrow(
+  currentScore: number | null,
+  weekAgo: { score: number | null } | null,
+): KpiTrend | undefined {
+  if (currentScore === null) return undefined;
+  return buildTrend(currentScore, weekAgo?.score ?? null, "up", (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)} vs 7d ago`, 0);
+}
+
+const SCORE_TREND_DAYS = 30;
+const TREND_DAY_LABEL = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+
+export type TechScoreTrendDay = {
+  date: string; // "YYYY-MM-DD", sortable as a string
+  label: string; // "Aug 12"
+  score: number | null; // null when no TechScoreDaily row exists for that day
+};
+
+export type TechScoreTrend = {
+  // Oldest first, SCORE_TREND_DAYS fixed entries (today last) — same
+  // fixed-window, null-for-missing-days shape as
+  // getServiceDeskHealthTrend (serviceDeskHealth.ts).
+  days: TechScoreTrendDay[];
+};
+
+function dateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+// DB-only — reads whatever TechScoreDaily rows exist for this tech in the
+// window (never backfilled, see that model's schema comment) and
+// left-joins them onto a fixed SCORE_TREND_DAYS-day calendar.
+export async function getTechScoreTrend(person: string): Promise<TechScoreTrend> {
+  const today = startOfToday();
+  const windowStart = new Date(today);
+  windowStart.setDate(windowStart.getDate() - (SCORE_TREND_DAYS - 1));
+
+  const rows = await prisma.techScoreDaily.findMany({
+    where: { person, date: { gte: windowStart, lte: today } },
+    select: { date: true, score: true },
+  });
+  const scoreByDate = new Map(rows.map((r) => [dateKey(r.date), r.score]));
+
+  const days: TechScoreTrendDay[] = [];
+  for (let i = 0; i < SCORE_TREND_DAYS; i++) {
+    const d = new Date(windowStart);
+    d.setDate(d.getDate() + i);
+    const key = dateKey(d);
+    days.push({ date: key, label: TREND_DAY_LABEL.format(d), score: scoreByDate.get(key) ?? null });
+  }
+
+  return { days };
 }
 
 function emptyServiceMetrics(): TechServiceMetrics {
