@@ -7,11 +7,15 @@ import type {
   TechServiceMetrics,
   TechSlaMetric,
   TechCardTicketData,
+  TechCardRow,
 } from "@/lib/services/techPerformanceScore";
 import type { TechRemoteSummary } from "@/lib/services/remoteSessions";
+import type { TechTimeCoverageSummary } from "@/lib/services/activityCorrelation";
+import type { TimelineEntry } from "@/lib/services/activityCorrelation";
 import { Stat, GroupLabel, StatusPill, DailyHoursBars } from "./shared";
 import { DrilldownStat } from "./DrilldownStat";
 import { TechScoreBadge } from "./TechScoreBadge";
+import { ActivityTimelineModal } from "./ActivityTimelineModal";
 import { LockedStrip } from "@/components/business-health/LockedStrip";
 
 // Confirmed genuinely unavailable per-technician, not just unbuilt — see
@@ -107,6 +111,11 @@ export function TechPerformanceRow({
   serviceMetrics,
   cardData,
   remote,
+  callMatchRows,
+  sessionMatchRows,
+  timeCoverage,
+  timeCoverageRows,
+  timelineEntries,
 }: {
   tech: TechPerformance;
   todayIndex: number;
@@ -120,6 +129,17 @@ export function TechPerformanceRow({
   // an impure operation the React Compiler's purity rule forbids.
   cardData: TechCardTicketData;
   remote: TechRemoteSummary;
+  // Calls / remote sessions matched to this tech's tickets (see
+  // lib/services/activityCorrelation.ts) — inferred from tech/client/
+  // timing signals only, never a confirmed join. Already filtered to
+  // this tech and already built into drillable rows server-side.
+  callMatchRows: TechCardRow[];
+  sessionMatchRows: TechCardRow[];
+  // Interaction time (deduped phone + remote) vs. logged hours — NOT a
+  // productivity measure, see activityCorrelation.ts's header comment.
+  timeCoverage: TechTimeCoverageSummary;
+  timeCoverageRows: TechCardRow[];
+  timelineEntries: TimelineEntry[];
 }) {
   const sev = paceSeverity(tech.pacePct);
   const { priorityCounts } = cardData;
@@ -133,6 +153,7 @@ export function TechPerformanceRow({
         </div>
         <div className="flex items-center gap-3">
           <Sparkline trend={tech.trend} />
+          <ActivityTimelineModal techLabel={tech.person} entries={timelineEntries} />
           <TechScoreBadge person={tech.person} result={scoreResult} />
           <StatusPill status={tech.status} />
         </div>
@@ -244,6 +265,15 @@ export function TechPerformanceRow({
               <Stat value={tech.avgAnswerSeconds ?? "—"} label="avg ring (s)" />
               <Stat value={tech.avgTalkMinutes} label="avg talk (min)" />
             </span>
+            <span className="flex flex-wrap gap-x-2.5">
+              <DrilldownStat
+                value={callMatchRows.length}
+                label="matched to tickets"
+                title={`${tech.person} — Calls Matched to Tickets (inferred, not confirmed)`}
+                rows={callMatchRows}
+                emptyMessage="No calls matched to a ticket this week — matching is inferred from tech, client, and timing only; HaloPSA doesn't expose which contact called on a given ticket."
+              />
+            </span>
             <div className="mt-1">
               <LockedStrip locked={PHONE_LOCKED} />
             </div>
@@ -299,6 +329,15 @@ export function TechPerformanceRow({
                     <Stat value={minutesLabel(remote.grossSeconds)} label="gross time" />
                     <Stat value={minutesLabel(remote.uniqueSeconds)} label="unique time" />
                   </span>
+                  <span className="flex flex-wrap gap-x-2.5">
+                    <DrilldownStat
+                      value={sessionMatchRows.length}
+                      label="matched to tickets"
+                      title={`${tech.person} — Remote Sessions Matched to Tickets (inferred, not confirmed)`}
+                      rows={sessionMatchRows}
+                      emptyMessage="No remote sessions matched to a ticket this week — matching needs the session's client linked to NinjaOne (see Team Detail above) plus tech/timing signals."
+                    />
+                  </span>
                   {remote.durationStatus === "available" && (
                     <span className="flex flex-wrap gap-x-2.5">
                       <Stat value={minutesLabel(remote.medianDurationSeconds!)} label="median session" />
@@ -307,6 +346,23 @@ export function TechPerformanceRow({
                   )}
                 </>
               )}
+            </div>
+          </div>
+          <div className="mt-3">
+            {/* Phone + remote combined, so it belongs outside the
+                remote-sessions-only branch above — a tech with zero
+                remote sessions this week can still have real phone
+                interaction time to compare against logged hours. */}
+            <GroupLabel>Time Coverage</GroupLabel>
+            <div className="mt-1 flex flex-col gap-0.5 font-data text-[11px]">
+              <DrilldownStat
+                value={timeCoverage.pct !== null ? `${timeCoverage.pct}%` : "—"}
+                label="of logged hours"
+                tone={timeCoverage.status === "review" ? "warn" : undefined}
+                title={`${tech.person} — Time Coverage (not a productivity measure)`}
+                rows={timeCoverageRows}
+                emptyMessage="No days this week have both logged hours and phone/remote activity to compare."
+              />
             </div>
           </div>
         </div>

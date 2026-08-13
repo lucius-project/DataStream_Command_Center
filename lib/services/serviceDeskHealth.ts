@@ -20,6 +20,7 @@ import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import type { Kpi } from "./businessHealth";
 import { getCallActivitySummary } from "./callActivity";
 import { getBacklogBreakdown, getTechActionableAging, getStaleTickets, type BacklogBreakdown, type TechActionableAging } from "./operations";
+import { median } from "./stats";
 
 function startOfToday(): Date {
   const d = new Date();
@@ -42,14 +43,11 @@ export type SlaMetric = {
   medianHours: number | null;
 };
 
-// Exported for reuse by techPerformanceScore.ts — same median logic,
-// one implementation.
-export function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
+// Re-exported for backward compat — techPerformanceScore.ts and
+// remoteSessions.ts both import median from here rather than from
+// lib/services/stats.ts directly. See stats.ts for why it's a separate,
+// dependency-free module (avoids a circular import with callActivity.ts).
+export { median };
 
 // Response SLA: eligible tickets are ones where the outcome is already
 // decided — either they've actually been responded to, or their

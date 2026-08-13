@@ -17,18 +17,15 @@ import { isBusinessHours } from "@/lib/dateUtils";
 import { matchKnownTech } from "@/lib/integrations/haloShared";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { fetchNinjaUsers, fetchNinjaOrganizations } from "@/lib/integrations/ninjaRmm";
-import { median } from "./serviceDeskHealth";
-
-function percentile90(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.ceil(0.9 * sorted.length) - 1);
-  return sorted[idx];
-}
+import { median, percentile90 } from "./stats";
 
 const MIN_PERCENTILE_SAMPLE = 5;
 
-function mergeIntervalSeconds(intervals: { start: Date; end: Date }[]): number {
+// Exported for reuse by activityCorrelation.ts's Customer Interaction
+// Time (Phase 9) — this function is already source-agnostic (just
+// {start,end}[] -> number), so combining phone-call and remote-session
+// intervals needs no fork, just the same merge applied to a bigger array.
+export function mergeIntervalSeconds(intervals: { start: Date; end: Date }[]): number {
   if (intervals.length === 0) return 0;
   const sorted = [...intervals].sort((a, b) => a.start.getTime() - b.start.getTime());
   let totalMs = 0;

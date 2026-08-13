@@ -33,15 +33,23 @@ export function weekFractionElapsed(): number {
   return businessDay / 5;
 }
 
-// 0-4 (Mon-Fri) index of today within the business week — weekends clamp
+// 0-4 (Mon-Fri) index of a date within its business week — weekends clamp
 // to 4 (Friday), same "week already complete" treatment as
-// weekFractionElapsed. Used to tell a daily hours chart which days are
-// "already happened, judge them" versus "hasn't happened yet, don't
-// flag it as a shortfall."
-export function todayWeekdayIndex(): number {
-  const day = new Date().getDay(); // 0 = Sun, 1 = Mon, ... 6 = Sat
+// weekFractionElapsed. Generalizes todayWeekdayIndex (below) to any date,
+// for bucketing e.g. calls/remote sessions by day alongside DailyHours'
+// own Mon-Fri row ordering (see activityCorrelation.ts's Customer
+// Interaction Time).
+export function weekdayIndexOf(date: Date): number {
+  const day = date.getDay(); // 0 = Sun, 1 = Mon, ... 6 = Sat
   if (day === 0 || day === 6) return 4;
   return day - 1;
+}
+
+// 0-4 (Mon-Fri) index of today within the business week. Used to tell a
+// daily hours chart which days are "already happened, judge them" versus
+// "hasn't happened yet, don't flag it as a shortfall."
+export function todayWeekdayIndex(): number {
+  return weekdayIndexOf(new Date());
 }
 
 // Mon-Fri, 8:30am-5:00pm — used to exclude after-hours calls from every

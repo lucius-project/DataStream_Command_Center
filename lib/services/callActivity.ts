@@ -3,30 +3,14 @@ import { isBusinessHours } from "@/lib/dateUtils";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import type { ContactDirectory } from "@/lib/integrations/contactDirectory";
 import type { CallRecord } from "@/app/generated/prisma/client";
+// stats.ts is dependency-free (unlike serviceDeskHealth.ts, which
+// imports getCallActivitySummary from this file — importing its median
+// back here would be circular), so both this file and serviceDeskHealth.ts
+// can safely share one implementation via stats.ts instead of each
+// keeping their own copy.
+import { median, percentile90 } from "./stats";
 
 const RECENT_CALLS_LIMIT = 100;
-
-// Local, not imported from serviceDeskHealth.ts's equivalent median() —
-// that file already imports from this one (getCallActivitySummary), so
-// importing back would be circular. Same even/odd-averaging definition,
-// just a second small copy.
-function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
-// Nearest-rank method — a judgment call among several valid P90
-// definitions, same honesty pattern as every other threshold in this
-// app; not claimed as a statistically "correct" P90, just a consistent
-// one.
-function percentile90(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.ceil(0.9 * sorted.length) - 1);
-  return sorted[idx];
-}
 
 // Below this many samples, a median/P90 is misleadingly precise — same
 // principle as MIN_SLA_SAMPLE elsewhere in this app.

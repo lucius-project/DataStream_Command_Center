@@ -7,6 +7,20 @@ import { getServiceDeskHealthSnapshot, getSlaAtRiskTickets } from "@/lib/service
 import { generateManagerAlerts } from "@/lib/services/managerAlerts";
 import { getStaleTickets } from "@/lib/services/operations";
 import { getRemoteSessionAnalytics, type TechRemoteSummary } from "@/lib/services/remoteSessions";
+import {
+  getCallTicketMatches,
+  callMatchesFor,
+  buildCallMatchRows,
+  getSessionTicketMatches,
+  sessionMatchesFor,
+  buildSessionMatchRows,
+  getClientLinkCoverage,
+  getCustomerInteractionTime,
+  getTimeCoverage,
+  summarizeTimeCoverage,
+  buildTimeCoverageRows,
+  getActivityTimeline,
+} from "@/lib/services/activityCorrelation";
 import type { Tech } from "@/lib/integrations/halopsa";
 import {
   getTechServiceMetrics,
@@ -56,6 +70,20 @@ export default async function TechPerformancePage() {
     getTicketsByTech(),
     getRemoteSessionAnalytics(),
   ]);
+  // Both depend on ticketsByTech above, so they can't join the batch —
+  // but each is a handful of cheap, already-synced DB reads plus (for
+  // sessions) two small unpersisted NinjaOne lookups, same cost profile
+  // as everything else on this page.
+  const [callTicketMatches, sessionTicketMatches, clientLinkCoverage] = await Promise.all([
+    getCallTicketMatches(directory, ticketsByTech),
+    getSessionTicketMatches(ticketsByTech),
+    getClientLinkCoverage(),
+  ]);
+  // Built from the two match arrays above (no extra fetch — see
+  // getCustomerInteractionTime's own comment), then joined against
+  // DailyHours for Time Coverage.
+  const interactionByTech = getCustomerInteractionTime(callTicketMatches, sessionTicketMatches);
+  const timeCoverageByTech = await getTimeCoverage(interactionByTech);
   const staleByTech = bucketStaleTicketsByTech(staleTickets);
   const serviceMetricsByTech = await getTechServiceMetrics(staleTickets);
   const remoteByTech = new Map<Tech, TechRemoteSummary>(remoteAnalytics.byTech.map((r) => [r.tech, r]));
@@ -114,6 +142,12 @@ export default async function TechPerformancePage() {
 
       <div className="mt-6">
         <h2 className="font-display text-sm font-medium text-text-muted">Team Detail</h2>
+        {clientLinkCoverage.total > 0 && (
+          <p className="mt-0.5 font-data text-[11px] text-text-faint">
+            {clientLinkCoverage.linked} of {clientLinkCoverage.total} clients linked to NinjaOne — remote-session-to-ticket
+            matching is only possible for linked clients (link accounts from a client&apos;s own page).
+          </p>
+        )}
       </div>
 
       <div className="mt-3">
@@ -138,6 +172,18 @@ export default async function TechPerformancePage() {
           // (see getRemoteSessionAnalytics), so this fallback only
           // matters if the roster ever drifts out of sync — same
           // defensive pattern as techPerformanceScore.ts's *For helpers.
+          const callMatches = callMatchesFor(callTicketMatches, tech.person);
+          const callMatchRows = buildCallMatchRows(callMatches);
+          const sessionMatches = sessionMatchesFor(sessionTicketMatches, tech.person);
+          const sessionMatchRows = buildSessionMatchRows(sessionMatches);
+          const timeCoverage = summarizeTimeCoverage(timeCoverageByTech.get(tech.person as Tech) ?? []);
+          const timeCoverageRows = buildTimeCoverageRows(timeCoverage.days);
+          const timelineEntries = getActivityTimeline(
+            tech.person as Tech,
+            callTicketMatches,
+            sessionTicketMatches,
+            ticketsByTech,
+          );
           const remote = remoteByTech.get(tech.person as Tech) ?? {
             tech: tech.person as Tech,
             techLabel: tech.person,
@@ -163,6 +209,11 @@ export default async function TechPerformancePage() {
               serviceMetrics={serviceMetrics}
               cardData={cardData}
               remote={remote}
+              callMatchRows={callMatchRows}
+              sessionMatchRows={sessionMatchRows}
+              timeCoverage={timeCoverage}
+              timeCoverageRows={timeCoverageRows}
+              timelineEntries={timelineEntries}
             />
           );
         })}
