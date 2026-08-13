@@ -1,3 +1,4 @@
+import { prisma } from "@/lib/prisma";
 import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halopsa";
 import { syncCallActivity } from "@/lib/integrations/unitedCloud";
 import { syncRemoteSessions } from "@/lib/integrations/ninjaRmm";
@@ -68,7 +69,7 @@ export default async function TechPerformancePage() {
   // so both this week's TicketLoadWeekly snapshot and the new Service
   // Desk Health section reflect freshly-synced ticket data, not whatever
   // was on disk before this page load.
-  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo, healthYesterday, kpiSettings, techRoleConfigs] =
+  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo, healthYesterday, kpiSettings, techRoleConfigs, haloCredential] =
     await Promise.all([
       syncTicketLoadHistory(),
       getContactDirectory().catch(() => null),
@@ -78,7 +79,11 @@ export default async function TechPerformancePage() {
       getServiceDeskHealthYesterday(),
       getKpiSettings(),
       getTechRoleConfigs(KNOWN_TECHS),
+      prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } }),
     ]);
+  // Null when HaloPSA isn't connected yet — SlaAtRiskSection then shows
+  // ticket titles as plain text instead of a link, never a guessed URL.
+  const instanceUrl = haloCredential?.instanceUrl ?? null;
   const techScoreWeights = {
     serviceDelivery: kpiSettings.techWeightServiceDelivery,
     quality: kpiSettings.techWeightQuality,
@@ -221,11 +226,11 @@ export default async function TechPerformancePage() {
       </div>
 
       <div className="mt-6">
-        <NeedsAttentionSection alerts={alerts} />
+        <NeedsAttentionSection alerts={alerts} knownTechs={KNOWN_TECHS} />
       </div>
 
       <div className="mt-6">
-        <SlaAtRiskSection tickets={slaAtRisk} />
+        <SlaAtRiskSection tickets={slaAtRisk} knownTechs={KNOWN_TECHS} instanceUrl={instanceUrl} />
       </div>
 
       <div className="mt-6">
