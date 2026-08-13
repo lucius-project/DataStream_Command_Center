@@ -144,6 +144,13 @@ export type NetTicketChange = {
 // ticket opened and closed same-day would otherwise vanish from both
 // counts). Closed = left the open feed today (see TicketCloseLog's
 // comment in schema.prisma for what "closed" means here).
+// Exported for reuse by morningBrief.ts (Phase 11), which derives the
+// same label from a persisted ServiceDeskHealthDaily.netChange value
+// rather than a live query — one label rule, not two.
+export function netTicketChangeLabel(net: number): NetTicketChange["label"] {
+  return net < 0 ? "GAINING_GROUND" : net === 0 ? "KEEPING_PACE" : "LOSING_GROUND";
+}
+
 export async function getNetTicketChange(): Promise<NetTicketChange> {
   const today = startOfToday();
   const [openedStillOpen, closedLog] = await Promise.all([
@@ -154,9 +161,8 @@ export async function getNetTicketChange(): Promise<NetTicketChange> {
   const createdToday = openedStillOpen + closedLog.filter((t) => t.openedAt >= today).length;
   const closedToday = closedLog.length;
   const net = createdToday - closedToday;
-  const label: NetTicketChange["label"] = net < 0 ? "GAINING_GROUND" : net === 0 ? "KEEPING_PACE" : "LOSING_GROUND";
 
-  return { createdToday, closedToday, net, label };
+  return { createdToday, closedToday, net, label: netTicketChangeLabel(net) };
 }
 
 export type ServiceDeskHealthSnapshot = {
@@ -447,6 +453,18 @@ export async function getServiceDeskHealthWeekAgo(): Promise<ServiceDeskHealthDa
   const weekAgo = startOfToday();
   weekAgo.setDate(weekAgo.getDate() - 7);
   return prisma.serviceDeskHealthDaily.findUnique({ where: { date: weekAgo } });
+}
+
+// Yesterday's row, or null if nobody loaded /tech-performance yesterday
+// (this app has no background cron — every table like this is only
+// written on page load, see ServiceDeskHealthDaily's schema comment) —
+// used by morningBrief.ts (Phase 11) for the "YESTERDAY" block, and by
+// Huddle Mode for the same figures. A missing row must read as "not
+// recorded," never a fabricated zero-activity day.
+export async function getServiceDeskHealthYesterday(): Promise<ServiceDeskHealthDaily | null> {
+  const yesterday = startOfToday();
+  yesterday.setDate(yesterday.getDate() - 1);
+  return prisma.serviceDeskHealthDaily.findUnique({ where: { date: yesterday } });
 }
 
 function pctDelta(delta: number): string {

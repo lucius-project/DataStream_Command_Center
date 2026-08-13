@@ -433,12 +433,19 @@ export async function syncTechScoreDaily(person: string, result: TechPerformance
 // The TechScoreDaily row from exactly 7 days ago for one tech, or null
 // before this table has that much history yet — same "same weekday, not
 // yesterday" reasoning as getServiceDeskHealthWeekAgo (serviceDeskHealth.ts).
-export async function getTechScoreWeekAgo(person: string): Promise<{ score: number | null } | null> {
+// Selects the category scores too (not just the overall score) — used
+// both for the score badge's own trend arrow (getTechScoreTrendArrow,
+// which only reads .score) and, from Phase 11, coaching.ts's per-category
+// insights (serviceDeliveryScore/workManagementScore), so both consumers
+// share one query instead of a second near-identical one.
+export async function getTechScoreWeekAgo(
+  person: string,
+): Promise<{ score: number | null; serviceDeliveryScore: number | null; workManagementScore: number | null } | null> {
   const weekAgo = startOfToday();
   weekAgo.setDate(weekAgo.getDate() - 7);
   return prisma.techScoreDaily.findUnique({
     where: { person_date: { person, date: weekAgo } },
-    select: { score: true },
+    select: { score: true, serviceDeliveryScore: true, workManagementScore: true },
   });
 }
 

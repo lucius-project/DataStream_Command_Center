@@ -8,8 +8,12 @@ import {
   getSlaAtRiskTickets,
   syncServiceDeskHealthDaily,
   getServiceDeskHealthWeekAgo,
+  getServiceDeskHealthYesterday,
 } from "@/lib/services/serviceDeskHealth";
 import { generateManagerAlerts } from "@/lib/services/managerAlerts";
+import { getCallAnswerRateTrend } from "@/lib/services/callActivity";
+import { getOrgCoachingInsights, getTechCoachingInsights } from "@/lib/services/coaching";
+import { buildMorningBrief } from "@/lib/services/morningBrief";
 import { getStaleTickets } from "@/lib/services/operations";
 import { getRemoteSessionAnalytics, type TechRemoteSummary } from "@/lib/services/remoteSessions";
 import {
@@ -49,6 +53,8 @@ import { ServiceDeskHealthSection } from "@/components/service-desk/ServiceDeskH
 import { NeedsAttentionSection } from "@/components/service-desk/NeedsAttentionSection";
 import { SlaAtRiskSection } from "@/components/service-desk/SlaAtRiskSection";
 import { ManagerActionQueue } from "@/components/service-desk/ManagerActionQueue";
+import { CoachingSection } from "@/components/service-desk/CoachingSection";
+import { MorningBriefCard } from "@/components/service-desk/MorningBriefCard";
 
 export default async function TechPerformancePage() {
   const [ticketSync, timeGapSync, callSync, remoteSessionSync] = await Promise.all([
@@ -61,13 +67,18 @@ export default async function TechPerformancePage() {
   // so both this week's TicketLoadWeekly snapshot and the new Service
   // Desk Health section reflect freshly-synced ticket data, not whatever
   // was on disk before this page load.
-  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo] = await Promise.all([
+  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo, healthYesterday] = await Promise.all([
     syncTicketLoadHistory(),
     getContactDirectory().catch(() => null),
     getServiceDeskHealthSnapshot(),
     getSlaAtRiskTickets(),
     getServiceDeskHealthWeekAgo(),
+    getServiceDeskHealthYesterday(),
   ]);
+  // Depends on directory above, so it joins the next batch rather than
+  // this one — used only by coaching.ts's org-level Call Answer Rate
+  // insight (Phase 11), not rendered directly on this page otherwise.
+  const callAnswerRateTrend = await getCallAnswerRateTrend(directory);
   // Freezes today's already-computed healthSnapshot into
   // ServiceDeskHealthDaily (Phase 10) — a pure DB upsert on values
   // already in hand, no new query, so it runs alongside getTechPerformance
@@ -129,6 +140,18 @@ export default async function TechPerformancePage() {
       techs.map(async (tech) => [tech.person as Tech, await getTechScoreWeekAgo(tech.person)] as const),
     ),
   );
+  // Coaching Insights & Positive Recognition (Phase 11) — a narrative
+  // layer over trend data already computed above, no new metrics.
+  const coachingInsights = [
+    ...getOrgCoachingInsights(healthSnapshot, healthWeekAgo, callAnswerRateTrend),
+    ...techs.flatMap((tech) =>
+      getTechCoachingInsights(
+        tech.person,
+        scoreByTech.get(tech.person as Tech)!,
+        techScoreWeekAgoByTech.get(tech.person as Tech) ?? null,
+      ),
+    ),
+  ];
   const remoteByTech = new Map<Tech, TechRemoteSummary>(remoteAnalytics.byTech.map((r) => [r.tech, r]));
   // Sum of each tech's own pro-rated expectedHoursToDate (techPerformance.ts)
   // rather than a second weekFraction computation here — one source of
@@ -144,6 +167,14 @@ export default async function TechPerformancePage() {
     expectedHoursToDate,
     directory,
   });
+  const morningBrief = buildMorningBrief(
+    healthSnapshot.healthScore.score,
+    healthYesterday,
+    healthSnapshot.responseSla.status === "available" ? healthSnapshot.responseSla.pct : null,
+    healthSnapshot.answerRate.status === "available" ? healthSnapshot.answerRate.pct : null,
+    alerts,
+    coachingInsights,
+  );
   const syncErrors = [
     ticketSync.error && `HaloPSA: ${ticketSync.error}`,
     timeGapSync.error && `HaloPSA: ${timeGapSync.error}`,
@@ -160,6 +191,10 @@ export default async function TechPerformancePage() {
       <p className="mt-1 text-sm text-text-muted">
         Service desk health, then team and per-tech detail — everything a Service Desk Manager needs today.
       </p>
+
+      <div className="mt-4">
+        <MorningBriefCard brief={morningBrief} />
+      </div>
 
       {syncErrors.length > 0 && (
         <div className="mt-4 flex flex-col gap-2 rounded-md border border-status-critical/40 bg-status-critical-dim px-4 py-3 text-sm text-status-critical">
@@ -183,6 +218,10 @@ export default async function TechPerformancePage() {
 
       <div className="mt-6">
         <ManagerActionQueue alerts={alerts} />
+      </div>
+
+      <div className="mt-6">
+        <CoachingSection insights={coachingInsights} />
       </div>
 
       <div className="mt-6">

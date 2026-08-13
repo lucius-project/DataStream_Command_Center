@@ -4,10 +4,11 @@ import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { matchKnownTech } from "@/lib/integrations/haloShared";
 import { paceSeverity } from "@/lib/hoursSeverity";
 import { bandHigherIsBetter, bandLowerIsBetter, type KpiStatus } from "@/lib/kpiStatus";
-import type { Kpi, KpiTrend } from "./businessHealth";
+import type { Kpi } from "./businessHealth";
 import type { ContactDirectory } from "@/lib/integrations/contactDirectory";
 import { excludeFalseMisses } from "./callActivity";
 import { getLoadPerTech } from "./operations";
+import { buildTrend } from "./stats";
 
 const TREND_WEEKS = 8;
 
@@ -498,26 +499,12 @@ function deriveTechStatus(t: {
 // CEO reads the same red/yellow/green vocabulary on both pages.
 // ---------------------------------------------------------------------------
 
-// delta is `current - previous` in the metric's own unit (points,
-// seconds, etc.) — a magnitude under `flatBelow` reads as "flat" rather
-// than forcing an arrow onto noise. `previous === null` (no honest prior
-// figure — see TechOrgLastWeek) omits the trend entirely rather than a
-// fabricated "flat".
-// Exported for reuse by serviceDeskHealth.ts's own period-over-period
-// KPI trends (Phase 10) — same delta/direction/omit-when-no-prior rule,
-// one implementation rather than a second copy.
-export function buildTrend(
-  current: number,
-  previous: number | null,
-  goodDirection: "up" | "down",
-  formatDelta: (delta: number) => string,
-  flatBelow = 0.5,
-): KpiTrend | undefined {
-  if (previous === null) return undefined;
-  const delta = current - previous;
-  const direction: KpiTrend["direction"] = Math.abs(delta) < flatBelow ? "flat" : delta > 0 ? "up" : "down";
-  return { direction, changeLabel: formatDelta(delta), goodDirection };
-}
+// Re-exported for backward compat — serviceDeskHealth.ts and
+// techPerformanceScore.ts both import buildTrend from here. Moved to
+// stats.ts (Phase 11) so callActivity.ts can use it too without a
+// circular import (this file already imports excludeFalseMisses from
+// callActivity.ts) — see stats.ts for the full comment.
+export { buildTrend };
 
 function kpiTeamUtilization(org: TechOrgSummary, lastWeek: TechOrgLastWeek): Kpi {
   const fraction = weekFractionElapsed();

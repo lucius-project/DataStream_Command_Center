@@ -1,6 +1,8 @@
 import type { NetTicketChange } from "@/lib/services/serviceDeskHealth";
 
-const LABEL_TEXT: Record<NetTicketChange["label"], string> = {
+// Exported for reuse by MorningBriefCard.tsx (Phase 11), which shows the
+// same label for yesterday's net change — one label→text/color mapping.
+export const LABEL_TEXT: Record<NetTicketChange["label"], string> = {
   GAINING_GROUND: "Gaining Ground",
   KEEPING_PACE: "Keeping Pace",
   LOSING_GROUND: "Losing Ground",
@@ -11,13 +13,13 @@ const LABEL_TEXT: Record<NetTicketChange["label"], string> = {
 // Gaining Ground). Colored and sized separately from the standard
 // KpiTile shape since this needs to be "visually prominent," not just
 // another tile in the grid.
-const LABEL_TEXT_CLASS: Record<NetTicketChange["label"], string> = {
+export const LABEL_TEXT_CLASS: Record<NetTicketChange["label"], string> = {
   GAINING_GROUND: "text-status-ok",
   KEEPING_PACE: "text-status-warn",
   LOSING_GROUND: "text-status-critical",
 };
 
-const LABEL_PILL_CLASS: Record<NetTicketChange["label"], string> = {
+export const LABEL_PILL_CLASS: Record<NetTicketChange["label"], string> = {
   GAINING_GROUND: "border-status-ok/40 bg-status-ok-dim text-status-ok",
   KEEPING_PACE: "border-status-warn/40 bg-status-warn-dim text-status-warn",
   LOSING_GROUND: "border-status-critical/40 bg-status-critical-dim text-status-critical",

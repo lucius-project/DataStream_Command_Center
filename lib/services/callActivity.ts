@@ -3,12 +3,13 @@ import { isBusinessHours } from "@/lib/dateUtils";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import type { ContactDirectory } from "@/lib/integrations/contactDirectory";
 import type { CallRecord } from "@/app/generated/prisma/client";
+import type { KpiTrend } from "./businessHealth";
 // stats.ts is dependency-free (unlike serviceDeskHealth.ts, which
 // imports getCallActivitySummary from this file — importing its median
 // back here would be circular), so both this file and serviceDeskHealth.ts
 // can safely share one implementation via stats.ts instead of each
 // keeping their own copy.
-import { median, percentile90 } from "./stats";
+import { median, percentile90, buildTrend } from "./stats";
 
 const RECENT_CALLS_LIMIT = 100;
 
@@ -203,6 +204,12 @@ export type CallAnswerRateTrend = {
   rolling30: { totalCalls: number; missedCalls: number; answerRatePct: number | null };
   // Oldest first, 12 entries, current (partial) month last.
   monthly: MonthlyCallStat[];
+  // Rolling-30 vs. the preceding 30-day window (days 31-60 back) — used
+  // by coaching.ts (Phase 11) for an org-level Call Answer Rate insight.
+  // undefined (not a fabricated flat trend) when either window has zero
+  // calls, same "omit rather than fabricate" rule buildTrend already
+  // enforces everywhere else.
+  trend: KpiTrend | undefined;
 };
 
 function monthKey(date: Date): string {
@@ -223,6 +230,7 @@ const MONTH_LABEL_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", ye
 export async function getCallAnswerRateTrend(directory: ContactDirectory | null): Promise<CallAnswerRateTrend> {
   const now = new Date();
   const rolling30Start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const prior30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
   const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
 
   const rawCalls = await prisma.callRecord.findMany({
@@ -243,12 +251,17 @@ export async function getCallAnswerRateTrend(directory: ContactDirectory | null)
 
   let rolling30Total = 0;
   let rolling30Missed = 0;
+  let prior30Total = 0;
+  let prior30Missed = 0;
   const byMonth = new Map<string, { total: number; missed: number }>();
 
   for (const call of calls) {
     if (call.startAt >= rolling30Start) {
       rolling30Total++;
       if (call.missed) rolling30Missed++;
+    } else if (call.startAt >= prior30Start) {
+      prior30Total++;
+      if (call.missed) prior30Missed++;
     }
     const key = monthKey(call.startAt);
     const entry = byMonth.get(key) ?? { total: 0, missed: 0 };
@@ -273,14 +286,27 @@ export async function getCallAnswerRateTrend(directory: ContactDirectory | null)
     });
   }
 
+  const rolling30AnswerRatePct =
+    rolling30Total > 0 ? Math.round(((rolling30Total - rolling30Missed) / rolling30Total) * 1000) / 10 : null;
+  const prior30AnswerRatePct =
+    prior30Total > 0 ? Math.round(((prior30Total - prior30Missed) / prior30Total) * 1000) / 10 : null;
+
   return {
     rolling30: {
       totalCalls: rolling30Total,
       missedCalls: rolling30Missed,
-      answerRatePct:
-        rolling30Total > 0 ? Math.round(((rolling30Total - rolling30Missed) / rolling30Total) * 1000) / 10 : null,
+      answerRatePct: rolling30AnswerRatePct,
     },
     monthly,
+    // flatBelow: 3 (not buildTrend's 0.5 default) — a sub-3-point answer
+    // rate wobble isn't worth flagging as a trend at all here, same
+    // insight-worthiness floor coaching.ts (Phase 11) applies to its own
+    // SLA statements, kept consistent by setting it at the source rather
+    // than re-filtering downstream.
+    trend:
+      rolling30AnswerRatePct !== null
+        ? buildTrend(rolling30AnswerRatePct, prior30AnswerRatePct, "up", (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta * 10) / 10}pts vs prior 30 days`, 3)
+        : undefined,
   };
 }
 
