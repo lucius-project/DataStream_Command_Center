@@ -1,17 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { X, TrendingUp } from "lucide-react";
+import { TrendingUp } from "lucide-react";
 import type { HealthScoreResult } from "@/lib/services/serviceDeskHealth";
 import type { KpiTrend } from "@/lib/services/businessHealth";
 import { HealthScoreTrendModal } from "./HealthScoreTrendModal";
-
-function scoreColor(score: number | null): string {
-  if (score === null) return "text-text-faint";
-  if (score >= 80) return "text-status-ok";
-  if (score >= 60) return "text-status-warn";
-  return "text-status-critical";
-}
+import { HealthScoreBreakdownModal, scoreColor } from "./HealthScoreBreakdownModal";
 
 // Same arrow glyph/color logic as KpiTile.tsx — Health Score isn't
 // Kpi-shaped (it's a dedicated component for visual prominence, not the
@@ -71,56 +65,7 @@ export function HealthScoreTile({ result, trend }: { result: HealthScoreResult; 
       </div>
 
       {trendOpen && <HealthScoreTrendModal onClose={() => setTrendOpen(false)} />}
-
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="absolute inset-0 bg-black/60" />
-          <div className="relative flex w-full max-w-lg flex-col gap-4 rounded-lg border border-border bg-panel p-5 shadow-xl">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="font-display text-base font-semibold text-text">Service Desk Health — Breakdown</div>
-                <div className="mt-0.5 font-data text-[11px] text-text-faint">
-                  Weighted composite, {result.score !== null ? `${result.score}/100` : "unavailable"}
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => setOpen(false)}
-                className="rounded p-1 text-text-faint hover:bg-panel-raised hover:text-text"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="font-data text-[11px] text-text-faint">
-              A single weighted score combining Responsiveness, Resolution, Workload, and Phone into one number — the
-              answer to &quot;how&apos;s the team doing right now,&quot; before drilling into any one category. 80+
-              is green (healthy), 60-79 is yellow (worth watching), below 60 is red (needs attention).
-            </div>
-
-            <div className="flex flex-col gap-3">
-              {result.categories.map((c) => (
-                <div key={c.key} className="rounded-md border border-border bg-panel-raised p-3">
-                  <div className="flex items-baseline justify-between">
-                    <span className="font-display text-sm font-medium text-text">{c.label}</span>
-                    <span className={`font-data text-sm font-semibold ${scoreColor(c.score)}`}>
-                      {c.score !== null ? `${c.score}/100` : "—"}
-                      <span className="ml-1 text-[11px] font-normal text-text-faint">· {c.weightPct}% weight</span>
-                    </span>
-                  </div>
-                  <div className="mt-1 font-data text-[11px] text-text-faint">{c.detail}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="font-data text-[11px] text-text-faint">
-              Weights rebalance proportionally when a category has no data yet (e.g. no calls today) — an unavailable
-              category is excluded, not scored as zero.
-            </div>
-          </div>
-        </div>
-      )}
+      {open && <HealthScoreBreakdownModal result={result} onClose={() => setOpen(false)} />}
     </>
   );
 }

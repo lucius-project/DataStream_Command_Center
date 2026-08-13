@@ -7,7 +7,7 @@
 // numbers" rule as coaching.ts.
 
 import type { ServiceDeskHealthDaily } from "@/app/generated/prisma/client";
-import { netTicketChangeLabel, type NetTicketChange } from "./serviceDeskHealth";
+import { netTicketChangeLabel, type NetTicketChange, type HealthScoreResult } from "./serviceDeskHealth";
 import type { ManagerAlert } from "./managerAlerts";
 import type { CoachingInsight } from "./coaching";
 import { bandHigherIsBetter, type KpiStatus } from "@/lib/kpiStatus";
@@ -20,13 +20,23 @@ export type MorningBriefYesterday = {
 };
 
 export type MorningBrief = {
-  healthScore: number | null;
+  // The full breakdown, not just the number — the Morning Brief card's
+  // Service Health tile opens the same HealthScoreBreakdownModal
+  // HealthScoreTile.tsx does, so it needs the category detail too, not
+  // a second, thinner copy of the score.
+  healthScore: HealthScoreResult;
   // null when no ServiceDeskHealthDaily row exists for yesterday — this
   // app has no background cron, so a day nobody loaded /tech-performance
   // leaves a real gap (see that model's schema comment). Never a
   // fabricated zero-activity day.
   yesterday: MorningBriefYesterday | null;
   responseSlaPct: number | null;
+  // Same live, admin-editable band as the "Response SLA" KPI tile on the
+  // main dashboard (KpiSettings.responseSlaGreenPct/YellowPct) — unlike
+  // Phone Answer below, this is the exact same today's-live number as
+  // that tile, not a different-scope stat, so it should read the same
+  // color that tile would show for the same value.
+  responseSlaStatus: KpiStatus;
   // Yesterday's inbound answer rate (ServiceDeskHealthDaily.phoneAnswerRatePct),
   // not today's — deliberately different scope than responseSlaPct above,
   // since a "how did phones go yesterday" question is what this line
@@ -40,10 +50,10 @@ export type MorningBrief = {
   // yellow, ≤96 red) that must not move if an admin retunes the
   // dashboard tile's threshold.
   phoneAnswerRateStatus: KpiStatus;
+  // Just a count — the full sorted list is one scroll away (Needs
+  // Attention / Manager Action Queue), so this card doesn't also single
+  // out one alert as "the" primary concern.
   attentionCount: number;
-  // alerts is expected pre-sorted (see sortAlerts, managerAlerts.ts) —
-  // this just takes the first entry, it doesn't re-rank.
-  primaryConcern: ManagerAlert | null;
   positiveHighlight: CoachingInsight | null;
 };
 
@@ -56,9 +66,11 @@ const PHONE_ANSWER_GREEN_PCT = 99;
 const PHONE_ANSWER_YELLOW_PCT = 97;
 
 export function buildMorningBrief(
-  healthScoreToday: number | null,
+  healthScoreToday: HealthScoreResult,
   yesterday: ServiceDeskHealthDaily | null,
   responseSlaPctToday: number | null,
+  responseSlaGreenPct: number,
+  responseSlaYellowPct: number,
   alerts: ManagerAlert[],
   coachingInsights: CoachingInsight[],
 ): MorningBrief {
@@ -74,11 +86,12 @@ export function buildMorningBrief(
         }
       : null,
     responseSlaPct: responseSlaPctToday,
+    responseSlaStatus:
+      responseSlaPctToday !== null ? bandHigherIsBetter(responseSlaPctToday, responseSlaGreenPct, responseSlaYellowPct) : "unavailable",
     phoneAnswerRatePct,
     phoneAnswerRateStatus:
       phoneAnswerRatePct !== null ? bandHigherIsBetter(phoneAnswerRatePct, PHONE_ANSWER_GREEN_PCT, PHONE_ANSWER_YELLOW_PCT) : "unavailable",
     attentionCount: alerts.length,
-    primaryConcern: alerts[0] ?? null,
     positiveHighlight: coachingInsights.find((i) => i.tone === "positive") ?? null,
   };
 }

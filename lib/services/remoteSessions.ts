@@ -13,7 +13,7 @@
 // its actual coverage start alongside the numbers.
 
 import { prisma } from "@/lib/prisma";
-import { isBusinessHours } from "@/lib/dateUtils";
+import { isBusinessHours, startOfToday } from "@/lib/dateUtils";
 import { matchKnownTech } from "@/lib/integrations/haloShared";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { fetchNinjaUsers, fetchNinjaOrganizations } from "@/lib/integrations/ninjaRmm";
@@ -236,4 +236,33 @@ export async function getRemoteSessionAnalytics(): Promise<RemoteSessionAnalytic
     topDevices,
     topClients,
   };
+}
+
+// Yesterday's remote connection count, per tech — a lightweight, single-
+// day-scoped sibling to getRemoteSessionAnalytics above rather than
+// filtering that function's much heavier all-time/device/client
+// aggregation down to one day. "Real connections" means the same thing
+// here as RemoteSessionSummary.sessions there: completed or in_progress,
+// not failed/canceled/requested-only.
+export async function getRemoteSessionCountsYesterday(): Promise<Map<Tech, number>> {
+  const start = startOfToday();
+  start.setDate(start.getDate() - 1);
+  const end = startOfToday();
+
+  const [sessions, users] = await Promise.all([
+    prisma.remoteSession.findMany({
+      where: { startedAt: { gte: start, lt: end } },
+      select: { ninjaUserId: true, status: true },
+    }),
+    fetchNinjaUsers().catch(() => new Map<string, string>()),
+  ]);
+
+  const counts = new Map<Tech, number>();
+  for (const s of sessions) {
+    if (s.status !== "completed" && s.status !== "in_progress") continue;
+    const tech = s.ninjaUserId ? matchKnownTech(users.get(s.ninjaUserId) ?? "", KNOWN_TECHS) : undefined;
+    if (!tech) continue;
+    counts.set(tech, (counts.get(tech) ?? 0) + 1);
+  }
+  return counts;
 }

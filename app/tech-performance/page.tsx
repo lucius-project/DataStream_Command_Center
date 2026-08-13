@@ -179,9 +179,11 @@ export default async function TechPerformancePage() {
     directory,
   });
   const morningBrief = buildMorningBrief(
-    healthSnapshot.healthScore.score,
+    healthSnapshot.healthScore,
     healthYesterday,
     healthSnapshot.responseSla.status === "available" ? healthSnapshot.responseSla.pct : null,
+    kpiSettings.responseSlaGreenPct,
+    kpiSettings.responseSlaYellowPct,
     alerts,
     coachingInsights,
   );

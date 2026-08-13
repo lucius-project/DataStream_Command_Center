@@ -126,3 +126,21 @@ export function businessHoursElapsed(start: Date, end: Date): number {
 
   return totalMinutes / 60;
 }
+
+// e.g. 1500 -> "1d 1h 0m" — days/hours omitted below their own unit (a
+// 45-minute duration reads "45m", not "0d 0h 45m") but hours always show
+// once days are present, so a duration doesn't silently drop a unit in
+// the middle (e.g. "1d 5m" reads as if only 5 minutes past the day
+// mark). Shared by anything showing a raw minutes count as a
+// human-readable duration (SLA At Risk countdowns, unattended-ticket age
+// in Manager Alerts) — one formatting rule, not a copy per caller.
+export function formatDuration(totalMinutes: number): string {
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (days > 0 || hours > 0) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(" ");
+}

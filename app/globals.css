@@ -90,11 +90,11 @@
   --color-series-2: var(--color-series-2);
 
   /* font-display/font-data are utility classes components opt into
-     explicitly (headings vs. numeric/tabular data); the body default
-     below is the sans font, not the mono one — see layout.tsx comment
-     for why that swap matters more than the palette here. */
+     explicitly (headings vs. numeric/tabular data); both point at the
+     sans font — no monospace anywhere in the app now, by request (the
+     old --font-data: var(--font-geist-mono) read as "typewriter"). */
   --font-display: var(--font-geist-sans);
-  --font-data: var(--font-geist-mono);
+  --font-data: var(--font-geist-sans);
 }
 
 body {

@@ -8,6 +8,14 @@ export function normalizeInstanceUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
+// Web-portal deep link to a specific ticket — confirmed against a real
+// ticket URL from this account's live instance (https://halo.dsnets.com/
+// ticket?id=10265), not guessed. Distinct from the API base URL these
+// adapter files otherwise use instanceUrl for.
+export function haloTicketUrl(instanceUrl: string, haloTicketId: string): string {
+  return `${normalizeInstanceUrl(instanceUrl)}/ticket?id=${haloTicketId}`;
+}
+
 export function firstString(raw: RawHaloRecord, keys: string[]): string | undefined {
   for (const key of keys) {
     const value = raw[key];

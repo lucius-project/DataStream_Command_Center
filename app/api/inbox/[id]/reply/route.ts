@@ -5,7 +5,11 @@ import { createDraftReply } from "@/lib/integrations/graph";
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { body } = (await request.json()) as { body?: string };
+  const requestBody = (await request.json().catch(() => null)) as { body?: string } | null;
+  if (!requestBody || typeof requestBody !== "object") {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  const { body } = requestBody;
   if (!body || !body.trim()) {
     return NextResponse.json({ error: "Draft body is required." }, { status: 400 });
   }

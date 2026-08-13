@@ -10,7 +10,8 @@
 // getStaleTickets in operations.ts) is left out rather than faked.
 
 import { prisma } from "@/lib/prisma";
-import { isBusinessHours } from "@/lib/dateUtils";
+import { isBusinessHours, formatDuration } from "@/lib/dateUtils";
+import { haloTicketUrl } from "@/lib/integrations/haloShared";
 import type { ContactDirectory } from "@/lib/integrations/contactDirectory";
 import type { TicketPriority } from "@/app/generated/prisma/client";
 import { getTechActionableTickets, getStaleTickets } from "./operations";
@@ -40,6 +41,15 @@ export type ManagerAlert = {
   // customer directly (a specific client's ticket/call), 0 = internal
   // (team workload/capacity). Not shown in the UI.
   customerImpact: 0 | 1;
+  // Real ticket title (TicketSnapshot.summary) and a direct link into the
+  // HaloPSA web portal (haloTicketUrl) — populated only for the 4 alert
+  // types that are actually about one specific ticket (p1p2Unattended,
+  // priorityUnassigned, slaApproachingBreach, staleTicketAlerts); null for
+  // every team/tech-level alert that has no single ticket to link to.
+  // ticketUrl is also null if no HaloPSA credential is connected yet (no
+  // instanceUrl to build a link from) — never a guessed/broken URL.
+  ticketTitle: string | null;
+  ticketUrl: string | null;
 };
 
 const P1P2_UNATTENDED_MINUTES = 30;
@@ -60,7 +70,7 @@ function priorityWeight(p: TicketPriority): number {
 // window than the existing >24h SLA_BREACH AttentionFlag on Command
 // Flow, which this is deliberately separate from (see this file's
 // header comment).
-async function p1p2Unattended(): Promise<ManagerAlert[]> {
+async function p1p2Unattended(instanceUrl: string | null): Promise<ManagerAlert[]> {
   const now = new Date();
   const tickets = await getTechActionableTickets();
   const alerts: ManagerAlert[] = [];
@@ -72,7 +82,7 @@ async function p1p2Unattended(): Promise<ManagerAlert[]> {
       id: `p1p2-unattended-${t.id}`,
       severity: "CRITICAL",
       category: "Unattended priority ticket",
-      issue: `${t.priority} ticket has received no action for ${minutesSince} minutes.`,
+      issue: `${t.priority} ticket has received no action for ${formatDuration(minutesSince)}.`,
       client: t.clientName,
       reference: t.haloTicketId,
       technician: t.assignedTech,
@@ -82,13 +92,15 @@ async function p1p2Unattended(): Promise<ManagerAlert[]> {
       recommendedAction: `Check in with ${t.assignedTech} on ${t.haloTicketId}.`,
       href: "/operations",
       customerImpact: 1,
+      ticketTitle: t.summary,
+      ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,
     });
   }
   return alerts;
 }
 
 // CRITICAL: a P1/P2 ticket nobody owns yet.
-async function priorityUnassigned(): Promise<ManagerAlert[]> {
+async function priorityUnassigned(instanceUrl: string | null): Promise<ManagerAlert[]> {
   const tickets = await prisma.ticketSnapshot.findMany({
     where: { assignedTech: "Unassigned", priority: { in: ["P1", "P2"] } },
   });
@@ -106,6 +118,8 @@ async function priorityUnassigned(): Promise<ManagerAlert[]> {
     recommendedAction: `Assign ${t.haloTicketId} to a technician.`,
     href: "/operations",
     customerImpact: 1,
+    ticketTitle: t.summary,
+    ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,
   }));
 }
 
@@ -130,6 +144,8 @@ async function missedCallNotReturned(directory: ContactDirectory | null): Promis
     recommendedAction: `Call ${c.companyName ?? c.externalNumber} back.`,
     href: "/calls",
     customerImpact: 1,
+    ticketTitle: null,
+    ticketUrl: null,
   }));
 }
 
@@ -147,7 +163,7 @@ function slaRiskText(dueAt: Date, respondedAt: Date | null): string {
 // entries (negative minutesRemaining) are excluded here — those are
 // covered by p1p2Unattended/the existing SLA_BREACH flag, not
 // duplicated as a second "approaching" warning.
-function slaApproachingBreach(slaAtRisk: SlaAtRiskTicket[]): ManagerAlert[] {
+function slaApproachingBreach(slaAtRisk: SlaAtRiskTicket[], instanceUrl: string | null): ManagerAlert[] {
   return slaAtRisk
     .filter((t) => t.minutesRemaining >= 0)
     .map((t) => ({
@@ -164,12 +180,14 @@ function slaApproachingBreach(slaAtRisk: SlaAtRiskTicket[]): ManagerAlert[] {
       recommendedAction: `Prioritize ${t.haloTicketId} before its ${t.slaType} deadline.`,
       href: "/operations",
       customerImpact: 1,
+      ticketTitle: t.summary,
+      ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,
     }));
 }
 
 // WARNING: reuses getStaleTickets (operations.ts) — a tech-actionable
 // ticket with no update in >24 business hours.
-async function staleTicketAlerts(): Promise<ManagerAlert[]> {
+async function staleTicketAlerts(instanceUrl: string | null): Promise<ManagerAlert[]> {
   const stale = await getStaleTickets();
   return stale.map((t) => ({
     id: `stale-${t.id}`,
@@ -185,6 +203,8 @@ async function staleTicketAlerts(): Promise<ManagerAlert[]> {
     recommendedAction: `Follow up on ${t.haloTicketId}.`,
     href: "/operations",
     customerImpact: 1,
+    ticketTitle: t.summary,
+    ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,
   }));
 }
 
@@ -215,6 +235,8 @@ function technicianOverloaded(techs: TechPerformance[]): ManagerAlert[] {
       recommendedAction: `Review ${t.person}'s queue for reassignment.`,
       href: "/tech-performance",
       customerImpact: 0,
+      ticketTitle: null,
+      ticketUrl: null,
     }));
 }
 
@@ -238,6 +260,8 @@ function backlogGrowing(health: ServiceDeskHealthSnapshot): ManagerAlert[] {
       recommendedAction: "Review dispatch priorities or reassign capacity.",
       href: "/operations",
       customerImpact: 0,
+      ticketTitle: null,
+      ticketUrl: null,
     },
   ];
 }
@@ -262,6 +286,8 @@ function excessiveOnHold(techs: TechPerformance[]): ManagerAlert[] {
       recommendedAction: `Check whether ${t.person}'s on-hold tickets are still waiting on something real.`,
       href: "/tech-performance",
       customerImpact: 0,
+      ticketTitle: null,
+      ticketUrl: null,
     }));
 }
 
@@ -289,6 +315,8 @@ function missingTimeEntries(techs: TechPerformance[], todayIndex: number): Manag
       recommendedAction: `Confirm ${t.person} is logging time as they work.`,
       href: "/tech-performance",
       customerImpact: 0,
+      ticketTitle: null,
+      ticketUrl: null,
     }));
 }
 
@@ -325,6 +353,8 @@ async function clientTicketSpike(): Promise<ManagerAlert[]> {
       recommendedAction: `Check whether ${client} has an underlying incident (e.g. a shared outage).`,
       href: "/operations",
       customerImpact: 1,
+      ticketTitle: null,
+      ticketUrl: null,
     }));
 }
 
@@ -351,6 +381,8 @@ function phoneAnswerRateDeclining(org: TechOrgSummary, lastWeek: TechOrgLastWeek
       recommendedAction: "Review phone coverage scheduling.",
       href: "/calls",
       customerImpact: 0,
+      ticketTitle: null,
+      ticketUrl: null,
     },
   ];
 }
@@ -377,6 +409,8 @@ function utilizationOutsideRange(org: TechOrgSummary, expectedHoursToDate: numbe
       recommendedAction: pct < 50 ? "Check for missing time entries or light workload." : "Check for burnout risk or overtime.",
       href: "/tech-performance",
       customerImpact: 0,
+      ticketTitle: null,
+      ticketUrl: null,
     },
   ];
 }
@@ -416,11 +450,19 @@ export async function generateManagerAlerts(input: {
 }): Promise<ManagerAlert[]> {
   const { health, slaAtRisk, techs, org, lastWeek, todayIndex, expectedHoursToDate, directory } = input;
 
+  // Fetched once here (not inside each ticket-alert generator) so
+  // building 4 alert types' worth of ticket links costs one extra
+  // primary-key lookup total, not four. Null (no credential connected
+  // yet) flows through as ticketUrl: null everywhere below — never a
+  // guessed link.
+  const haloCredential = await prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } });
+  const instanceUrl = haloCredential?.instanceUrl ?? null;
+
   const [unattended, unassigned, unreturnedCalls, stale, spike] = await Promise.all([
-    p1p2Unattended(),
-    priorityUnassigned(),
+    p1p2Unattended(instanceUrl),
+    priorityUnassigned(instanceUrl),
     missedCallNotReturned(directory),
-    staleTicketAlerts(),
+    staleTicketAlerts(instanceUrl),
     clientTicketSpike(),
   ]);
 
@@ -428,7 +470,7 @@ export async function generateManagerAlerts(input: {
     ...unattended,
     ...unassigned,
     ...unreturnedCalls,
-    ...slaApproachingBreach(slaAtRisk),
+    ...slaApproachingBreach(slaAtRisk, instanceUrl),
     ...stale,
     ...technicianOverloaded(techs),
     ...backlogGrowing(health),

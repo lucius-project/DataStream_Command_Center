@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { prisma } from "@/lib/prisma";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import {
   getServiceDeskHealthSnapshot,
@@ -7,18 +7,18 @@ import {
   getSlaAtRiskTickets,
 } from "@/lib/services/serviceDeskHealth";
 import { getBacklogBreakdown, getStaleTickets } from "@/lib/services/operations";
-import { getTechPerformance } from "@/lib/services/techPerformance";
+import { getTechPerformance, getYesterdayHoursByPerson, getCallStatsByTechYesterday } from "@/lib/services/techPerformance";
 import { getTechServiceMetrics, computeTechPerformanceScore, roleFor, serviceMetricsFor, getTechScoreWeekAgo } from "@/lib/services/techPerformanceScore";
 import { generateManagerAlerts } from "@/lib/services/managerAlerts";
 import { getCallAnswerRateTrend, getMissedCallRecoveryStats, getUnreturnedMissedCalls } from "@/lib/services/callActivity";
+import { getRemoteSessionCountsYesterday } from "@/lib/services/remoteSessions";
 import { getOrgCoachingInsights, getTechCoachingInsights } from "@/lib/services/coaching";
 import { buildMorningBrief } from "@/lib/services/morningBrief";
 import { getKpiSettings, getTechRoleConfigs } from "@/lib/services/kpiSettings";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { MorningBriefCard } from "@/components/service-desk/MorningBriefCard";
 import { BacklogBreakdownPanel } from "@/components/service-desk/BacklogBreakdownPanel";
-import { SlaAtRiskSection } from "@/components/service-desk/SlaAtRiskSection";
-import { NeedsAttentionSection } from "@/components/service-desk/NeedsAttentionSection";
+import { TechFocusSection } from "@/components/service-desk/TechFocusSection";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
 import { MissedCallRecoveryPanel } from "@/components/calls/MissedCallRecoveryPanel";
 import { InsightCard } from "@/components/service-desk/CoachingSection";
@@ -36,7 +36,7 @@ import { InsightCard } from "@/components/service-desk/CoachingSection";
 export default async function TechPerformanceHuddlePage() {
   const directory = await getContactDirectory().catch(() => null);
 
-  const [healthSnapshot, healthWeekAgo, healthYesterday, slaAtRisk, backlog, staleTickets, kpiSettings, techRoleConfigs] =
+  const [healthSnapshot, healthWeekAgo, healthYesterday, slaAtRisk, backlog, staleTickets, kpiSettings, techRoleConfigs, haloCredential] =
     await Promise.all([
       getServiceDeskHealthSnapshot(),
       getServiceDeskHealthWeekAgo(),
@@ -46,7 +46,11 @@ export default async function TechPerformanceHuddlePage() {
       getStaleTickets(),
       getKpiSettings(),
       getTechRoleConfigs(KNOWN_TECHS),
+      prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } }),
     ]);
+  // Null when HaloPSA isn't connected yet — TechFocusSection then shows
+  // ticket titles as plain text instead of a link, never a guessed URL.
+  const instanceUrl = haloCredential?.instanceUrl ?? null;
   const techScoreWeights = {
     serviceDelivery: kpiSettings.techWeightServiceDelivery,
     quality: kpiSettings.techWeightQuality,
@@ -55,14 +59,42 @@ export default async function TechPerformanceHuddlePage() {
     phone: kpiSettings.techWeightPhone,
   };
 
-  const [{ techs, org, todayIndex, lastWeek }, serviceMetricsByTech, callAnswerRateTrend, missedCallStats, unreturnedCalls] =
-    await Promise.all([
-      getTechPerformance(directory),
-      getTechServiceMetrics(staleTickets),
-      getCallAnswerRateTrend(directory),
-      getMissedCallRecoveryStats(directory),
-      getUnreturnedMissedCalls(directory),
-    ]);
+  const [
+    { techs, org, todayIndex, lastWeek, lastWeekHoursByPerson },
+    serviceMetricsByTech,
+    callAnswerRateTrend,
+    missedCallStats,
+    unreturnedCalls,
+    yesterdayHoursByPerson,
+    yesterdayCallStatsByPerson,
+    yesterdayRemoteSessionsByPerson,
+  ] = await Promise.all([
+    getTechPerformance(directory),
+    getTechServiceMetrics(staleTickets),
+    getCallAnswerRateTrend(directory),
+    getMissedCallRecoveryStats(directory),
+    getUnreturnedMissedCalls(directory),
+    getYesterdayHoursByPerson(),
+    getCallStatsByTechYesterday(directory),
+    getRemoteSessionCountsYesterday(),
+  ]);
+
+  // Per-tech mini-stats shown beside each name in Today's Priorities
+  // (TechFocusSection) — every source above already reads null/missing
+  // as "no data," so a tech with nothing synced for a given stat shows
+  // "—" there, never a fabricated 0.
+  const techStats = new Map(
+    KNOWN_TECHS.map((person) => [
+      person,
+      {
+        lastWeekHours: lastWeekHoursByPerson.get(person) ?? null,
+        yesterdayHours: yesterdayHoursByPerson.get(person) ?? null,
+        yesterdayInboundCalls: yesterdayCallStatsByPerson.get(person)?.inbound ?? null,
+        yesterdayOutboundCalls: yesterdayCallStatsByPerson.get(person)?.outbound ?? null,
+        yesterdayRemoteSessions: yesterdayRemoteSessionsByPerson.get(person) ?? null,
+      },
+    ]),
+  );
 
   const scoreByTech = new Map(
     techs.map((tech) => [
@@ -85,9 +117,6 @@ export default async function TechPerformanceHuddlePage() {
     expectedHoursToDate,
     directory,
   });
-  const criticalAlerts = alerts.filter((a) => a.severity === "CRITICAL");
-  const topPriorities = alerts.slice(0, 5);
-
   const coachingInsights = [
     ...getOrgCoachingInsights(healthSnapshot, healthWeekAgo, callAnswerRateTrend),
     ...techs.flatMap((tech) =>
@@ -97,25 +126,22 @@ export default async function TechPerformanceHuddlePage() {
   const wins = coachingInsights.filter((i) => i.tone === "positive");
 
   const morningBrief = buildMorningBrief(
-    healthSnapshot.healthScore.score,
+    healthSnapshot.healthScore,
     healthYesterday,
     healthSnapshot.responseSla.status === "available" ? healthSnapshot.responseSla.pct : null,
+    kpiSettings.responseSlaGreenPct,
+    kpiSettings.responseSlaYellowPct,
     alerts,
     coachingInsights,
   );
 
   return (
-    <div className="mx-auto max-w-3xl p-4 md:p-6">
-      <div className="flex items-baseline justify-between gap-2">
-        <h1 className="font-display text-2xl font-semibold text-text">Huddle Mode</h1>
-        <Link href="/tech-performance" className="font-data text-xs text-text-faint hover:underline">
-          ← Full Detail
-        </Link>
-      </div>
+    <div className="mx-auto max-w-5xl p-4 md:p-6">
+      <h1 className="font-display text-2xl font-semibold text-text">Huddle Mode</h1>
       <p className="mt-1 text-sm text-text-muted">Everything for a short morning meeting, on one screen.</p>
 
       <div className="mt-4">
-        <MorningBriefCard brief={morningBrief} />
+        <MorningBriefCard brief={morningBrief} huddleActive />
       </div>
 
       <div className="mt-6">
@@ -126,14 +152,15 @@ export default async function TechPerformanceHuddlePage() {
       </div>
 
       <div className="mt-6">
-        <SlaAtRiskSection tickets={slaAtRisk} />
+        <TechFocusSection
+          alerts={alerts}
+          slaAtRisk={slaAtRisk}
+          coachingInsights={coachingInsights}
+          knownTechs={KNOWN_TECHS}
+          techStats={techStats}
+          instanceUrl={instanceUrl}
+        />
       </div>
-
-      {criticalAlerts.length > 0 && (
-        <div className="mt-6">
-          <NeedsAttentionSection alerts={criticalAlerts} />
-        </div>
-      )}
 
       <div className="mt-6">
         <MissedCallRecoveryPanel stats={missedCallStats} unreturned={unreturnedCalls} />
@@ -154,22 +181,6 @@ export default async function TechPerformanceHuddlePage() {
               <InsightCard key={w.id} insight={w} />
             ))}
           </div>
-        </div>
-      )}
-
-      {topPriorities.length > 0 && (
-        <div className="mt-6 flex flex-col gap-2">
-          <h2 className="font-display text-sm font-medium text-text-muted">Today&apos;s Priorities</h2>
-          <ol className="flex flex-col gap-1.5">
-            {topPriorities.map((a, i) => (
-              <li key={a.id} className="flex items-baseline gap-2 rounded-md border border-border bg-panel p-2.5 text-sm">
-                <span className="font-data text-text-faint">{i + 1}.</span>
-                <Link href={a.href} className="text-text hover:underline">
-                  {a.issue}
-                </Link>
-              </li>
-            ))}
-          </ol>
         </div>
       )}
     </div>

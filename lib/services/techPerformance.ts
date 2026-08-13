@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { startOfWeek, endOfWeek, weekFractionElapsed, todayWeekdayIndex, isBusinessHours } from "@/lib/dateUtils";
+import { startOfWeek, endOfWeek, weekFractionElapsed, todayWeekdayIndex, isBusinessHours, startOfToday } from "@/lib/dateUtils";
 import { KNOWN_TECHS, type Tech } from "@/lib/integrations/halopsa";
 import { matchKnownTech } from "@/lib/integrations/haloShared";
 import { paceSeverity } from "@/lib/hoursSeverity";
@@ -230,6 +230,11 @@ export type TechPerformanceResult = {
   org: TechOrgSummary;
   todayIndex: number;
   lastWeek: TechOrgLastWeek;
+  // Per-tech last week's raw logged hours (TimeGap.loggedHours) — the
+  // org-level `lastWeek` above only carries a summed utilization ratio,
+  // discarding the per-person breakdown; this keeps it. Built from
+  // lastWeekGaps below, already fetched for `lastWeek` — no new query.
+  lastWeekHoursByPerson: Map<Tech, number>;
 };
 
 export async function getTechPerformance(directory: ContactDirectory | null): Promise<TechPerformanceResult> {
@@ -323,8 +328,42 @@ export async function getTechPerformance(directory: ContactDirectory | null): Pr
 
   const org = summarizeOrg(KNOWN_TECHS, { currentByPerson, loadByPerson, callStats, dailyByPerson });
   const lastWeek = summarizeLastWeek(KNOWN_TECHS, lastWeekGaps, lastWeekCallStats, lastWeekTicketLoad);
+  const lastWeekHoursByPerson = new Map<Tech, number>(lastWeekGaps.map((g) => [g.person as Tech, g.loggedHours]));
 
-  return { techs, org, todayIndex: todayWeekdayIndex(), lastWeek };
+  return { techs, org, todayIndex: todayWeekdayIndex(), lastWeek, lastWeekHoursByPerson };
+}
+
+// Yesterday's hours logged, per tech — DailyHours is Mon-Fri only (see
+// its schema comment), so a tech with no row for yesterday (a weekend,
+// or a business day that genuinely hasn't synced) is simply absent from
+// the returned map rather than defaulted to a fabricated 0; the caller
+// decides how to display "no data" honestly.
+export async function getYesterdayHoursByPerson(): Promise<Map<Tech, number>> {
+  const yesterday = startOfToday();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const rows = await prisma.dailyHours.findMany({ where: { date: yesterday } });
+  return new Map(rows.map((r) => [r.person as Tech, r.hours]));
+}
+
+// Yesterday's inbound/outbound call counts, per tech — same attribution
+// and after-hours/false-miss exclusion as getCallStatsByTech above, just
+// for a single-day window instead of the current/last week ranges that
+// function is normally called with. Counts both answered and missed
+// (a call that was never picked up still happened), matching how
+// callsInbound/callsOutbound are computed elsewhere in this file.
+export async function getCallStatsByTechYesterday(directory: ContactDirectory | null): Promise<Map<Tech, { inbound: number; outbound: number }>> {
+  const start = startOfToday();
+  start.setDate(start.getDate() - 1);
+  const end = startOfToday();
+  const stats = await getCallStatsByTech(directory, { start, end });
+  const result = new Map<Tech, { inbound: number; outbound: number }>();
+  for (const [tech, c] of stats) {
+    result.set(tech, {
+      inbound: c.inboundAnswered + c.inboundMissed,
+      outbound: c.outboundAnswered + c.outboundMissed,
+    });
+  }
+  return result;
 }
 
 // Last week's comparable org-level figures, for the KPI strip's

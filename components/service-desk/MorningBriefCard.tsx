@@ -1,23 +1,39 @@
 import Link from "next/link";
 import type { MorningBrief } from "@/lib/services/morningBrief";
-import { LABEL_TEXT, LABEL_TEXT_CLASS } from "./NetTicketChangeTile";
+import { LABEL_TEXT_CLASS } from "./NetTicketChangeTile";
 import { STATUS_TEXT } from "@/lib/kpiStatus";
 import { InfoButton } from "@/components/shared/InfoButton";
+import { MorningBriefHealthTile } from "./MorningBriefHealthTile";
 
-function scoreColor(score: number | null): string {
-  if (score === null) return "text-text-faint";
-  if (score >= 80) return "text-status-ok";
-  if (score >= 60) return "text-status-warn";
-  return "text-status-critical";
+// A row of equal-size tiles, same visual language as KpiTile.tsx (label
+// on top, big number, one line of subtext) — every data point gets the
+// same footprint regardless of how much text it has, instead of the old
+// flex-wrap row where a short "94%" sat next to a much longer "Yesterday:
+// 12 created · 9 closed · net -3 · Gaining Ground" sentence. shrink-0
+// value class keeps a null "—" from making that particular tile any
+// shorter than its neighbors.
+function BriefTile({ label, value, valueClassName, sub }: { label: string; value: string; valueClassName?: string; sub?: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1 rounded-md border border-border bg-panel-raised p-3 text-center">
+      <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">{label}</span>
+      <span className={`shrink-0 font-display text-xl font-semibold ${valueClassName ?? "text-text"}`}>{value}</span>
+      {sub && <span className="font-data text-[10px] text-text-faint">{sub}</span>}
+    </div>
+  );
 }
 
 // Compact, read-in-five-seconds summary at the very top of the page —
-// deterministic, no chart, matches the master spec's own worked example
-// almost verbatim (SERVICE HEALTH / YESTERDAY / Response SLA / Phone
-// Answer / attention count / PRIMARY CONCERN / POSITIVE). See
-// morningBrief.ts for why every field here is a plain reshaping of data
-// already computed elsewhere on this page, never a new calculation.
-export function MorningBriefCard({ brief }: { brief: MorningBrief }) {
+// deterministic, no chart, based on the master spec's own worked example
+// (SERVICE HEALTH / YESTERDAY / Response SLA / Phone Answer / attention
+// count / POSITIVE). Deliberately doesn't single out one "primary
+// concern" — attention count is just a number, the full sorted list is
+// one scroll away in Needs Attention / the Manager Action Queue. Shown
+// identically here and at the top of Huddle Mode (/tech-performance/
+// huddle, linked below) — this is the same card a morning huddle reads
+// off of, not a separate view. See morningBrief.ts for why every field
+// here is a plain reshaping of data already computed elsewhere on this
+// page, never a new calculation.
+export function MorningBriefCard({ brief, huddleActive = false }: { brief: MorningBrief; huddleActive?: boolean }) {
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex items-center justify-between gap-2">
@@ -27,58 +43,62 @@ export function MorningBriefCard({ brief }: { brief: MorningBrief }) {
             title="Morning Brief"
             what="A five-second summary at the top of the page — every figure here is a plain reshaping of numbers computed elsewhere (Service Desk Health, Manager Alerts, Coaching Insights), never a new or separately-calculated number."
             meaning="Service health is today's live composite score. Yesterday's created/closed/net comes from the last time this page was loaded on that day (no background job — a day nobody opened the page has no row). Response SLA is today's live figure; Phone Answer is deliberately yesterday's, since 'how did phones go yesterday' is a different, more complete question than a still-in-progress today."
-            calculation="Primary Concern is simply the highest-priority item from Manager Alerts. Positive Highlight is the first positive-tone Coaching Insight, if any exist yet."
+            calculation="Attention count is the size of the same sorted Manager Alerts list Needs Attention and the Manager Action Queue show below — scroll down for the full list rather than singling one out here. Positive Highlight is the first positive-tone Coaching Insight, if any exist yet."
           />
         </span>
-        <Link href="/tech-performance/huddle" className="font-data text-[11px] text-accent hover:underline">
-          Huddle Mode →
+        {/* A real navigation link styled as a switch, not a JS-driven
+            toggle — Huddle Mode is a genuinely separate route (its own
+            page deliberately makes no sync calls of its own, see that
+            page's header comment), so "on" and "off" are two URLs, not
+            client state. Works with open-in-new-tab, no extra JS needed. */}
+        <Link
+          href={huddleActive ? "/tech-performance" : "/tech-performance/huddle"}
+          aria-label={huddleActive ? "Turn off Huddle Mode" : "Turn on Huddle Mode"}
+          className="flex items-center gap-2"
+        >
+          <span className="font-data text-[11px] text-text-faint">Huddle Mode</span>
+          <span
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+              huddleActive ? "bg-accent" : "bg-border-strong"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                huddleActive ? "translate-x-[18px]" : "translate-x-1"
+              }`}
+            />
+          </span>
         </Link>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-2">
-        <div className="flex items-baseline gap-1.5">
-          <span className={`font-display text-2xl font-semibold ${scoreColor(brief.healthScore)}`}>
-            {brief.healthScore !== null ? `${brief.healthScore}/100` : "—"}
-          </span>
-          <span className="font-data text-[11px] text-text-faint">service health</span>
-        </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <MorningBriefHealthTile result={brief.healthScore} />
 
-        {brief.yesterday ? (
-          <div className="font-data text-xs text-text-muted">
-            Yesterday: {brief.yesterday.created} created · {brief.yesterday.closed} closed · net{" "}
-            {brief.yesterday.net >= 0 ? "+" : ""}
-            {brief.yesterday.net} ·{" "}
-            <span className={LABEL_TEXT_CLASS[brief.yesterday.label]}>{LABEL_TEXT[brief.yesterday.label]}</span>
-          </div>
-        ) : (
-          <div className="font-data text-xs text-text-faint">Yesterday: no data recorded — the page wasn&apos;t loaded.</div>
-        )}
+        <BriefTile
+          label="Yesterday"
+          value={brief.yesterday ? `${brief.yesterday.net >= 0 ? "+" : ""}${brief.yesterday.net}` : "—"}
+          valueClassName={brief.yesterday ? LABEL_TEXT_CLASS[brief.yesterday.label] : "text-text-faint"}
+          sub={brief.yesterday ? `${brief.yesterday.created} created · ${brief.yesterday.closed} closed` : "No data recorded"}
+        />
 
-        <div className="font-data text-xs text-text-muted">
-          Response SLA: {brief.responseSlaPct !== null ? `${Math.round(brief.responseSlaPct)}%` : "—"}
-        </div>
-        <div className="font-data text-xs text-text-muted">
-          Phone Answer (yesterday):{" "}
-          <span className={brief.phoneAnswerRatePct !== null ? STATUS_TEXT[brief.phoneAnswerRateStatus] : undefined}>
-            {brief.phoneAnswerRatePct !== null ? `${Math.round(brief.phoneAnswerRatePct)}%` : "—"}
-          </span>
-        </div>
+        <BriefTile
+          label="Response SLA"
+          value={brief.responseSlaPct !== null ? `${Math.round(brief.responseSlaPct)}%` : "—"}
+          valueClassName={brief.responseSlaPct !== null ? STATUS_TEXT[brief.responseSlaStatus] : undefined}
+        />
+
+        <BriefTile
+          label="Phone Answer (yesterday)"
+          value={brief.phoneAnswerRatePct !== null ? `${Math.round(brief.phoneAnswerRatePct)}%` : "—"}
+          valueClassName={brief.phoneAnswerRatePct !== null ? STATUS_TEXT[brief.phoneAnswerRateStatus] : undefined}
+        />
+
+        <BriefTile
+          label="Needs Attention"
+          value={`${brief.attentionCount}`}
+          sub={`item${brief.attentionCount === 1 ? "" : "s"}`}
+        />
       </div>
-
-      <div className="mt-3 border-t border-border pt-3 font-data text-xs text-text-muted">
-        {brief.attentionCount} item{brief.attentionCount === 1 ? "" : "s"} require attention
-      </div>
-
-      {brief.primaryConcern && (
-        <div className="mt-2 flex items-start gap-2">
-          <span className="shrink-0 font-data text-[10px] font-semibold tracking-wide text-status-critical uppercase">
-            Primary Concern
-          </span>
-          <Link href={brief.primaryConcern.href} className="text-sm text-text hover:underline">
-            {brief.primaryConcern.issue}
-          </Link>
-        </div>
-      )}
 
       {brief.positiveHighlight && (
         <div className="mt-2 flex items-start gap-2">
