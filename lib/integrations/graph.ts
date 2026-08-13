@@ -97,6 +97,23 @@ export async function createDraftReply(
   });
 }
 
+// POST /me/messages creates a new message as a draft in the mailbox's
+// Drafts folder — it is never sent unless a separate /send call is made
+// on it (which this app never does). Same guarantee createDraftReply
+// above already relies on, just for a brand-new message instead of a
+// reply to an existing thread.
+export async function createDraftMessage(
+  accessToken: string,
+  { toEmail, subject, bodyHtml }: { toEmail: string; subject: string; bodyHtml: string },
+): Promise<void> {
+  const client = getGraphClient(accessToken);
+  await client.api("/me/messages").post({
+    subject,
+    body: { contentType: "HTML", content: bodyHtml },
+    toRecipients: [{ emailAddress: { address: toEmail } }],
+  });
+}
+
 export async function markMessageRead(accessToken: string, messageId: string): Promise<void> {
   const client = getGraphClient(accessToken);
   await client.api(`/me/messages/${messageId}`).patch({ isRead: true });

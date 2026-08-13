@@ -1,25 +1,26 @@
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
-import type { AlertSeverity, ManagerAlert } from "@/lib/services/managerAlerts";
+import type { ManagerAlert } from "@/lib/services/managerAlerts";
 import type { SlaAtRiskTicket } from "@/lib/services/serviceDeskHealth";
 import type { CoachingInsight } from "@/lib/services/coaching";
-import type { TicketPriority } from "@/app/generated/prisma/client";
 import { PriorityBadge } from "@/components/operations/PriorityBadge";
 import { InfoButton } from "@/components/shared/InfoButton";
-import { formatDuration } from "@/lib/dateUtils";
-import { matchKnownTech, haloTicketUrl } from "@/lib/integrations/haloShared";
+import { GenerateCoachingDraftsButton } from "./GenerateCoachingDraftsButton";
+import {
+  slaFocusItems,
+  alertFocusItems,
+  trainingFocusItems,
+  groupByTechnician,
+  round1,
+  YESTERDAY_HOURS_GREEN,
+  YESTERDAY_HOURS_YELLOW,
+  type FocusItem,
+  type Tier,
+  type TechStats,
+} from "@/lib/services/techFocus";
 import { bandHigherIsBetter, STATUS_TEXT } from "@/lib/kpiStatus";
 
-const UNASSIGNED = "Unassigned";
-
-// A single priority scale every item type maps onto, so "order the list
-// by priority" means something across three genuinely different sources
-// instead of three separately-sorted blocks. 0 = drop everything else
-// (breached SLA, critical alert), 1 = today's real risk (SLA due soon,
-// warning alert), 2 = worth knowing (SLA due later, monitor alert),
-// 3 = development, not urgent (training recommendations — a coaching
-// note is never more time-sensitive than an actual ticket/SLA problem).
-type Tier = 0 | 1 | 2 | 3;
+export type { TechStats };
 
 const TIER_BADGE_CLASS: Record<Tier, string> = {
   0: "border-status-critical/40 bg-status-critical-dim text-status-critical",
@@ -27,55 +28,6 @@ const TIER_BADGE_CLASS: Record<Tier, string> = {
   2: "border-status-info/40 bg-status-info-dim text-status-info",
   3: "border-accent/40 bg-accent-dim text-accent",
 };
-
-const SEVERITY_TIER: Record<AlertSeverity, Tier> = { CRITICAL: 0, WARNING: 1, MONITOR: 2 };
-
-const SLA_TYPE_LABEL: Record<SlaAtRiskTicket["slaType"], string> = {
-  response: "Response SLA",
-  resolution: "Resolution SLA",
-};
-
-// Same 60-minute "due soon" cutoff SlaAtRiskSection.tsx already uses for
-// its own warn-vs-default styling — one definition of "soon," not two.
-const SLA_DUE_SOON_MINUTES = 60;
-
-// TicketSnapshot.assignedTech (and ManagerAlert.technician, which is
-// read straight from it) carries HaloPSA's raw agent name — e.g. "Cameron
-// Clark" — while KNOWN_TECHS, TechPerformance.person, and Coaching
-// Insight subjects all use the short canonical form ("Cameron"). Without
-// normalizing here, the same person would silently split across two
-// group keys (a ticket-derived "Cameron Clark" card with none of that
-// tech's Training recommendations or per-tech stats, which are keyed by
-// "Cameron") — this is the same matchKnownTech fuzzy-match every other
-// tech-attribution path in this app already goes through, not a new
-// rule invented for this component.
-function normalizeTechnician(raw: string, knownTechs: readonly string[]): string {
-  return matchKnownTech(raw, knownTechs) ?? raw;
-}
-
-// Yesterday's phone/remote activity and last week's logged hours — pure
-// context alongside the priority list, not itself a priority item (no
-// tier, no card). null means no data synced for that stat, shown as
-// "—", never a fabricated 0 (see huddle/page.tsx's own comment on this).
-export type TechStats = {
-  lastWeekHours: number | null;
-  yesterdayHours: number | null;
-  yesterdayInboundCalls: number | null;
-  yesterdayOutboundCalls: number | null;
-  yesterdayRemoteSessions: number | null;
-};
-
-function round1(n: number): number {
-  return Math.round(n * 10) / 10;
-}
-
-// A full 8-hour day is the implicit expectation everywhere else hours
-// are tracked in this app (expectedWeeklyHours defaults to 40 = 5×8,
-// see kpiSettings.ts) — 7+ counts as a full day worked (small buffer for
-// rounding/short breaks), 6-7.99 is a partial day worth a quick check,
-// under 6 is a real gap worth asking about in the huddle.
-const YESTERDAY_HOURS_GREEN = 7;
-const YESTERDAY_HOURS_YELLOW = 6;
 
 function MiniStat({ label, value, valueClassName }: { label: string; value: string; valueClassName?: string }) {
   return (
@@ -104,105 +56,6 @@ function TechStatsRow({ stats }: { stats: TechStats }) {
       <MiniStat label="Remote" value={stats.yesterdayRemoteSessions !== null ? `${stats.yesterdayRemoteSessions}` : "—"} />
     </div>
   );
-}
-
-type FocusItem = {
-  id: string;
-  technician: string;
-  tier: Tier;
-  badge: string;
-  text: string;
-  href: string | null;
-  priority: TicketPriority | null;
-  ticketTitle: string | null;
-  ticketUrl: string | null;
-};
-
-// Straight from the SLA At Risk countdown — not deduped against
-// "SLA approaching" alerts because alertFocusItems below drops that
-// alert category entirely instead (same underlying fact, would just
-// repeat the same line in different words). This is also the only
-// source for already-breached tickets, since slaApproachingBreach
-// (managerAlerts.ts) deliberately excludes those.
-function slaFocusItems(slaAtRisk: SlaAtRiskTicket[], knownTechs: readonly string[], instanceUrl: string | null): FocusItem[] {
-  return slaAtRisk.map((t) => {
-    const overdue = t.minutesRemaining < 0;
-    const duration = formatDuration(Math.abs(t.minutesRemaining));
-    const tier: Tier = overdue ? 0 : t.minutesRemaining <= SLA_DUE_SOON_MINUTES ? 1 : 2;
-    return {
-      id: `sla-${t.id}-${t.slaType}`,
-      technician: normalizeTechnician(t.assignedTech, knownTechs),
-      tier,
-      badge: SLA_TYPE_LABEL[t.slaType],
-      text: overdue ? `Breached ${duration} ago` : `Due in ${duration}`,
-      href: "/operations",
-      priority: t.priority,
-      ticketTitle: t.summary,
-      ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,
-    };
-  });
-}
-
-function alertFocusItems(alerts: ManagerAlert[], knownTechs: readonly string[]): FocusItem[] {
-  return alerts
-    .filter((a) => a.category !== "SLA approaching")
-    .map((a) => ({
-      id: a.id,
-      technician: a.technician ? normalizeTechnician(a.technician, knownTechs) : UNASSIGNED,
-      tier: SEVERITY_TIER[a.severity],
-      badge: a.category,
-      text: a.issue,
-      href: a.href,
-      priority: a.priority,
-      ticketTitle: a.ticketTitle,
-      ticketUrl: a.ticketUrl,
-    }));
-}
-
-// "Training recommendations" — improvement-tone Coaching Insights
-// (coaching.ts) attributed to a specific technician (subject). Positive-
-// tone insights stay in the separate Wins section elsewhere on this
-// page; org-level insights (subject "Service Desk") have no single tech
-// to attach to, so they're excluded here rather than mis-attributed.
-function trainingFocusItems(coachingInsights: CoachingInsight[], knownTechs: readonly string[]): FocusItem[] {
-  const techSet = new Set(knownTechs);
-  return coachingInsights
-    .filter((i) => i.tone === "improvement" && techSet.has(i.subject))
-    .map((i) => ({
-      id: i.id,
-      technician: i.subject,
-      tier: 3 as const,
-      badge: "Training",
-      text: i.statement,
-      href: i.href ?? null,
-      priority: null,
-      ticketTitle: null,
-      ticketUrl: null,
-    }));
-}
-
-// All three sources arrive pre-sorted within their own tier already
-// (slaAtRisk by minutesRemaining, alerts by sortAlerts' customer-impact/
-// severity rule) — a stable sort by tier alone preserves that relative
-// order without inventing a single fabricated score across three
-// unrelated units (minutes, severity rank, coaching relevance).
-function groupByTechnician(items: FocusItem[]) {
-  const map = new Map<string, FocusItem[]>();
-  for (const item of items) {
-    if (!map.has(item.technician)) map.set(item.technician, []);
-    map.get(item.technician)!.push(item);
-  }
-  return [...map.entries()]
-    .map(([technician, techItems]) => ({
-      technician,
-      items: [...techItems].sort((a, b) => a.tier - b.tier),
-    }))
-    .sort((a, b) => {
-      const aUnassigned = a.technician === UNASSIGNED ? 1 : 0;
-      const bUnassigned = b.technician === UNASSIGNED ? 1 : 0;
-      if (aUnassigned !== bUnassigned) return aUnassigned - bUnassigned;
-      return b.items.length - a.items.length;
-    });
 }
 
 // Same table convention as ManagerActionQueue.tsx (columns, border-t
@@ -272,7 +125,9 @@ function FocusTableRow({ item, rank }: { item: FocusItem; rank: number }) {
 // all need mentally re-sorting by person anyway. The main
 // /tech-performance page keeps its three separate, severity-first
 // sections (fits a manager scanning for the worst problem rather than
-// working a roster).
+// working a roster). Item-building/grouping logic lives in
+// lib/services/techFocus.ts, shared with the coaching email drafts
+// route so both show exactly the same thing.
 export function TechFocusSection({
   alerts,
   slaAtRisk,
@@ -297,15 +152,18 @@ export function TechFocusSection({
 
   return (
     <div className="flex flex-col gap-3">
-      <span className="flex items-center gap-1.5">
-        <h2 className="font-display text-sm font-medium text-text-muted">Today&apos;s Priorities</h2>
-        <InfoButton
-          title="Today's Priorities"
-          what="Everything worth raising in the huddle, one large widget per technician, ordered worst-first within each: SLA-at-risk tickets, every flagged Manager Alert, and that tech's training recommendations, combined into a single priority-ordered list instead of three separate sections to cross-reference."
-          meaning={`${items.length} item${items.length === 1 ? "" : "s"} across ${groups.length} group${groups.length === 1 ? "" : "s"}.`}
-          calculation="Priority order: Critical alerts and already-breached SLAs first, then Warning alerts and SLAs due within 60 minutes, then Monitor alerts and SLAs due later, then Training recommendations last (a coaching note is never more urgent than an actual ticket problem). SLA items come straight from the SLA At Risk countdown; alert items are the same rule-based Manager Alerts checks used elsewhere, minus the 'SLA approaching' category (generated from the same SLA At Risk list, so including it again would repeat the same fact). Training recommendations are improvement-tone Coaching Insights attributed to that technician. Items with no single technician (unassigned tickets, team-wide alerts) are grouped under Unassigned, shown last. The small stats beside each name (Last Wk / Yesterday hours, Inbound / Outbound calls, Remote sessions) are context, not priority items — a dash means nothing synced for that stat, never a fabricated zero. Yesterday's hours is colored: 7+ green, 6-7.99 yellow, below 6 red."
-        />
-      </span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5">
+          <h2 className="font-display text-sm font-medium text-text-muted">Today&apos;s Priorities</h2>
+          <InfoButton
+            title="Today's Priorities"
+            what="Everything worth raising in the huddle, one large widget per technician, ordered worst-first within each: SLA-at-risk tickets, every flagged Manager Alert, and that tech's training recommendations, combined into a single priority-ordered list instead of three separate sections to cross-reference."
+            meaning={`${items.length} item${items.length === 1 ? "" : "s"} across ${groups.length} group${groups.length === 1 ? "" : "s"}.`}
+            calculation="Priority order: Critical alerts and already-breached SLAs first, then Warning alerts and SLAs due within 60 minutes, then Monitor alerts and SLAs due later, then Training recommendations last (a coaching note is never more urgent than an actual ticket problem). SLA items come straight from the SLA At Risk countdown; alert items are the same rule-based Manager Alerts checks used elsewhere, minus the 'SLA approaching' category (generated from the same SLA At Risk list, so including it again would repeat the same fact). Training recommendations are improvement-tone Coaching Insights attributed to that technician. Items with no single technician (unassigned tickets, team-wide alerts) are grouped under Unassigned, shown last. The small stats beside each name (Last Wk / Yesterday hours, Inbound / Outbound calls, Remote sessions) are context, not priority items — a dash means nothing synced for that stat, never a fabricated zero. Yesterday's hours is colored: 7+ green, 6-7.99 yellow, below 6 red."
+          />
+        </span>
+        <GenerateCoachingDraftsButton />
+      </div>
       {items.length === 0 ? (
         <div className="rounded-md border border-border bg-panel-raised p-4 text-center text-sm text-text-muted">
           Nothing needs attention right now.

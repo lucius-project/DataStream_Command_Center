@@ -233,6 +233,25 @@ export async function fetchHaloAgentNames(instanceUrl: string, accessToken: stri
   return names;
 }
 
+// Same /api/Agent endpoint as fetchHaloAgentNames above, additionally
+// reading the real `email` field HaloPSA returns per agent (confirmed
+// live, e.g. "bjansen@dsnets.com") — used to address coaching-draft
+// emails to the right person without a hand-maintained list. A separate
+// function (not a shared fetch) rather than changing fetchHaloAgentNames'
+// return shape, since that one's already relied on by live ticket sync
+// and touching it isn't worth the risk for a second, unrelated caller.
+export async function fetchHaloAgentEmails(instanceUrl: string, accessToken: string): Promise<{ name: string; email: string }[]> {
+  const data = await haloGet(instanceUrl, accessToken, "/api/Agent");
+  const rows = unwrapList(data, "agents");
+  const result: { name: string; email: string }[] = [];
+  for (const row of rows) {
+    const name = firstString(row, ["name"]);
+    const email = firstString(row, ["email"]);
+    if (name && email) result.push({ name, email });
+  }
+  return result;
+}
+
 // Same story as agent names: tickets only carry a numeric status_id, not a
 // status string. Confirmed real status names ("New", "In Progress",
 // "Waiting on Customer", ...) via /api/Status — a plain array here too.
