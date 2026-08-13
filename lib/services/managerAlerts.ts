@@ -5,9 +5,12 @@
 // plain-English alerts, it never recomputes a core KPI itself. Every
 // alert here is backed by a real query result, nothing inferred or
 // guessed; anything not confidently buildable from real data (reopen
-// rate, FTR decline — both need HaloPSA's per-ticket Actions history,
-// which this engine deliberately avoids fetching, same reasoning as
-// getStaleTickets in operations.ts) is left out rather than faked.
+// rate, FTR decline — both need HaloPSA's per-ticket Actions history)
+// is left out rather than faked. One narrow, deliberate exception:
+// noChargeTicketNotLowPriority below does fetch per-ticket Actions
+// (via noChargeTickets.ts), scoped tightly to yesterday's active
+// tickets only — see that file's own header for the cost/rate-limit
+// reasoning that keeps this the exception, not the pattern.
 
 import { prisma } from "@/lib/prisma";
 import { isBusinessHours, formatDuration } from "@/lib/dateUtils";
@@ -16,6 +19,7 @@ import type { ContactDirectory } from "@/lib/integrations/contactDirectory";
 import type { TicketPriority } from "@/app/generated/prisma/client";
 import { getTechActionableTickets, getStaleTickets } from "./operations";
 import { getUnreturnedMissedCalls } from "./callActivity";
+import { getNoChargeTicketsYesterday } from "./noChargeTickets";
 import type { ServiceDeskHealthSnapshot, SlaAtRiskTicket } from "./serviceDeskHealth";
 import type { TechPerformance, TechOrgSummary, TechOrgLastWeek } from "./techPerformance";
 
@@ -203,6 +207,33 @@ async function staleTicketAlerts(instanceUrl: string | null): Promise<ManagerAle
     recommendedAction: `Follow up on ${t.haloTicketId}.`,
     href: "/operations",
     customerImpact: 1,
+    ticketTitle: t.summary,
+    ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,
+  }));
+}
+
+// A ticket with a visible no-charge ("actisbillable: false") time entry
+// logged yesterday, whose priority isn't already P4/Low — per the SOP's
+// own spirit, genuinely no-charge work should be triaged Low; if it
+// isn't, that's worth a manager's attention. See noChargeTickets.ts for
+// why this check is scoped to yesterday's active tickets and why it can
+// only under-flag, never wrongly flag, a ticket.
+async function noChargeTicketNotLowPriority(instanceUrl: string | null): Promise<ManagerAlert[]> {
+  const tickets = await getNoChargeTicketsYesterday();
+  return tickets.map((t) => ({
+    id: `no-charge-${t.id}`,
+    severity: "WARNING" as const,
+    category: "No-charge ticket not marked Low priority",
+    issue: `${t.haloTicketId} has a no-charge time entry logged yesterday but is priority ${t.priority}, not Low.`,
+    client: t.clientName,
+    reference: t.haloTicketId,
+    technician: t.assignedTech,
+    priority: t.priority,
+    ageMinutes: null,
+    slaRisk: null,
+    recommendedAction: `If ${t.haloTicketId} is genuinely non-billable, update its priority to Low.`,
+    href: "/operations",
+    customerImpact: 0,
     ticketTitle: t.summary,
     ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,
   }));
@@ -458,12 +489,13 @@ export async function generateManagerAlerts(input: {
   const haloCredential = await prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } });
   const instanceUrl = haloCredential?.instanceUrl ?? null;
 
-  const [unattended, unassigned, unreturnedCalls, stale, spike] = await Promise.all([
+  const [unattended, unassigned, unreturnedCalls, stale, spike, noCharge] = await Promise.all([
     p1p2Unattended(instanceUrl),
     priorityUnassigned(instanceUrl),
     missedCallNotReturned(directory),
     staleTicketAlerts(instanceUrl),
     clientTicketSpike(),
+    noChargeTicketNotLowPriority(instanceUrl),
   ]);
 
   const alerts: ManagerAlert[] = [
@@ -479,6 +511,7 @@ export async function generateManagerAlerts(input: {
     ...spike,
     ...phoneAnswerRateDeclining(org, lastWeek),
     ...utilizationOutsideRange(org, expectedHoursToDate),
+    ...noCharge,
   ];
 
   return sortAlerts(alerts);

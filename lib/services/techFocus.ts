@@ -134,6 +134,8 @@ const ALERT_REMEDIATION: Record<string, string> = {
   "Technician overloaded": "Flag your workload to the team/manager so tickets can be redistributed.",
   "On-hold tickets accumulating": "Review your on-hold tickets and confirm each is still genuinely waiting on something real, not just parked.",
   "Missing time entries": "Per SOP: log your time for today's work — internal time counts toward your daily target too.",
+  "No-charge ticket not marked Low priority":
+    "If this work is genuinely non-billable, update the ticket's priority to Low to reflect that.",
 };
 
 export function alertFocusItems(alerts: ManagerAlert[], knownTechs: readonly string[]): FocusItem[] {
