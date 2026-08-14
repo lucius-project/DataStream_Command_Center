@@ -2,24 +2,28 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Phone, ChevronDown, ChevronUp } from "lucide-react";
+import { Receipt, ChevronDown, ChevronUp } from "lucide-react";
 import { IntegrationCard } from "./IntegrationCard";
 import { InstructionsToggle } from "./InstructionsToggle";
-import { UnitedCloudCredentialForm } from "./UnitedCloudCredentialForm";
+import { SherwebCredentialForm } from "./SherwebCredentialForm";
 import { TestConnectionButton } from "./TestConnectionButton";
-import type { UnitedCloudCredentialStatus } from "@/lib/services/integrations";
+import type { SherwebCredentialStatus } from "@/lib/services/integrations";
 
 const VENDOR_NOTE =
-  'Menu labels vary by plan/version — search your admin portal for "API" or "API Keys" if these don\'t match exactly.';
+  "Menu labels vary by portal version — look for \"Security\" or \"APIs\" in the Sherweb partner portal (cumulus.sherweb.com) if these don't match exactly.";
 
 const STEPS = [
-  "In the United Cloud (Hosted PBX) admin portal, go to API Keys and create a new key.",
-  "Check \"Read Only\" when creating it — this app only ever reads call history, never places, transfers, holds, or disconnects calls.",
-  "Note the key value (shown once) and your domain (use \"~\" for your own domain unless told otherwise).",
-  "Enter the API base URL, domain, and key below, then save — it tests the connection immediately.",
+  "In the Sherweb partner portal (cumulus.sherweb.com), go to Security > APIs and add a new application.",
+  "Note the Client ID, Client Secret, and Subscription Key (each shown once) generated for it.",
+  "Enter all three below, then save — it tests the connection immediately.",
 ];
 
-export function UnitedCloudConnectionCard({ status }: { status: UnitedCloudCredentialStatus }) {
+// Vendor Licensing Phase 1 — credential plumbing only. No sync yet:
+// Phase 1b (customers/subscriptions/renewal-date sync) depends on live
+// discovery against these credentials once they're saved, same "verify
+// before designing a field mapping" discipline as every other
+// integration in this app.
+export function SherwebConnectionCard({ status }: { status: SherwebCredentialStatus }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -27,7 +31,7 @@ export function UnitedCloudConnectionCard({ status }: { status: UnitedCloudCrede
 
   async function disconnect() {
     setBusy(true);
-    await fetch("/api/integrations/unitedcloud/config", { method: "DELETE" });
+    await fetch("/api/integrations/sherweb/config", { method: "DELETE" });
     setBusy(false);
     setConfirming(false);
     router.refresh();
@@ -44,42 +48,41 @@ export function UnitedCloudConnectionCard({ status }: { status: UnitedCloudCrede
       </button>
       {showCredentialForm && (
         <div className="mt-3 rounded-md border border-border bg-panel-raised p-3">
-          <UnitedCloudCredentialForm status={status} />
+          <SherwebCredentialForm status={status} />
         </div>
       )}
     </div>
   ) : (
     <div className="rounded-md border border-border bg-panel-raised p-3">
-      <div className="mb-3 text-sm text-text">Add your United Cloud API key to connect.</div>
-      <UnitedCloudCredentialForm status={status} />
+      <div className="mb-3 text-sm text-text">Add your Sherweb API credentials to connect.</div>
+      <SherwebCredentialForm status={status} />
     </div>
   );
 
   return (
     <IntegrationCard
-      icon={Phone}
-      name="United Cloud"
+      icon={Receipt}
+      name="Sherweb"
       statusLabel={status.configured ? (status.healthy ? "Connected" : "Disconnected") : "Not connected"}
       tone={status.configured ? (status.healthy ? "ok" : "error") : "off"}
       description={
         status.configured
           ? status.healthy
-            ? "Live — powers Call Activity."
+            ? "Live — credentials verified. License/renewal sync is not built yet."
             : `Connection issue: ${status.healthError}`
-          : "Powers Call Activity. Not connected — Call Activity stays empty until it is."
+          : "M365, Keeper, and Nerdio licensing. Not connected."
       }
     >
       <div className="flex flex-col gap-3">
         {status.configured && (
           <div className="flex flex-col gap-1 font-data text-xs text-text-muted">
             <span>
-              API base URL: <span className="text-text">{status.apiBaseUrl}</span>
+              Client ID: <span className="text-text">{status.clientId}</span>
             </span>
-            <span>Domain: {status.domain}</span>
           </div>
         )}
 
-        {status.configured && <TestConnectionButton testUrl="/api/integrations/unitedcloud/test" />}
+        {status.configured && <TestConnectionButton testUrl="/api/integrations/sherweb/test" />}
 
         {status.configured &&
           (!confirming ? (
@@ -91,10 +94,7 @@ export function UnitedCloudConnectionCard({ status }: { status: UnitedCloudCrede
             </button>
           ) : (
             <div className="flex flex-col gap-2 rounded-md border border-status-critical/40 bg-status-critical-dim p-3">
-              <span className="text-xs text-status-critical">
-                This removes the stored API key. Call Activity will stop syncing until
-                reconnected.
-              </span>
+              <span className="text-xs text-status-critical">This removes the stored credentials.</span>
               <div className="flex gap-2">
                 <button
                   disabled={busy}

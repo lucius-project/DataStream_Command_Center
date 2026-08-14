@@ -6,6 +6,7 @@ import { DollarSign, ChevronDown, ChevronUp } from "lucide-react";
 import { IntegrationCard } from "./IntegrationCard";
 import { InstructionsToggle } from "./InstructionsToggle";
 import { QuickBooksCredentialForm } from "./QuickBooksCredentialForm";
+import { TestConnectionButton } from "./TestConnectionButton";
 import { ClientText } from "@/components/ClientText";
 import type { QuickBooksCredentialStatus, QuickBooksConnectionInfo } from "@/lib/services/integrations";
 
@@ -89,9 +90,9 @@ export function QuickBooksConnectionCard({
     <IntegrationCard
       icon={DollarSign}
       name="QuickBooks Online"
-      statusLabel="Connected"
-      tone="ok"
-      description="Live — powers Company Profile financials."
+      statusLabel={info.healthy ? "Connected" : "Disconnected"}
+      tone={info.healthy ? "ok" : "error"}
+      description={info.healthy ? "Live — powers Company Profile financials." : `Connection issue: ${info.healthError}`}
     >
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1 font-data text-xs text-text-muted">
@@ -104,6 +105,8 @@ export function QuickBooksConnectionCard({
             />
           </span>
         </div>
+
+        <TestConnectionButton testUrl="/api/integrations/quickbooks/test" />
 
         {!confirming ? (
           <button

@@ -6,6 +6,7 @@ import { Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 import { IntegrationCard } from "./IntegrationCard";
 import { InstructionsToggle } from "./InstructionsToggle";
 import { AnthropicCredentialForm } from "./AnthropicCredentialForm";
+import { TestConnectionButton } from "./TestConnectionButton";
 import type { AnthropicCredentialStatus } from "@/lib/services/integrations";
 
 const VENDOR_NOTE = "API keys are managed at console.anthropic.com, separate from your regular Claude.ai login.";
@@ -57,11 +58,13 @@ export function AnthropicConnectionCard({ status }: { status: AnthropicCredentia
     <IntegrationCard
       icon={Sparkles}
       name="Anthropic"
-      statusLabel={status.configured ? "Connected" : "Not connected"}
-      tone={status.configured ? "ok" : "off"}
+      statusLabel={status.configured ? (status.healthy ? "Connected" : "Disconnected") : "Not connected"}
+      tone={status.configured ? (status.healthy ? "ok" : "error") : "off"}
       description={
         status.configured
-          ? `Live — powers the Business Health chat (${status.model}).`
+          ? status.healthy
+            ? `Live — powers the Business Health chat (${status.model}).`
+            : `Connection issue: ${status.healthError}`
           : "Powers the Business Health chat. Not connected — the chat panel stays disabled until it is."
       }
     >
@@ -73,6 +76,8 @@ export function AnthropicConnectionCard({ status }: { status: AnthropicCredentia
             </span>
           </div>
         )}
+
+        {status.configured && <TestConnectionButton testUrl="/api/integrations/anthropic/test" />}
 
         {status.configured &&
           (!confirming ? (

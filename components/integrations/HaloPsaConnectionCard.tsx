@@ -6,6 +6,7 @@ import { Ticket, ChevronDown, ChevronUp } from "lucide-react";
 import { IntegrationCard } from "./IntegrationCard";
 import { InstructionsToggle } from "./InstructionsToggle";
 import { HaloPsaCredentialForm } from "./HaloPsaCredentialForm";
+import { TestConnectionButton } from "./TestConnectionButton";
 import type { HaloPsaCredentialStatus } from "@/lib/services/integrations";
 
 const VENDOR_NOTE =
@@ -58,11 +59,13 @@ export function HaloPsaConnectionCard({ status }: { status: HaloPsaCredentialSta
     <IntegrationCard
       icon={Ticket}
       name="HaloPSA"
-      statusLabel={status.configured ? "Connected" : "Mocked"}
-      tone={status.configured ? "ok" : "mocked"}
+      statusLabel={status.configured ? (status.healthy ? "Connected" : "Disconnected") : "Mocked"}
+      tone={status.configured ? (status.healthy ? "ok" : "error") : "mocked"}
       description={
         status.configured
-          ? "Live — powers Operations (tickets, load, attention flags)."
+          ? status.healthy
+            ? "Live — powers Operations (tickets, load, attention flags)."
+            : `Connection issue: ${status.healthError}`
           : "Powers Operations (tickets, load, attention flags). Seeded fixture data until connected."
       }
     >
@@ -75,6 +78,8 @@ export function HaloPsaConnectionCard({ status }: { status: HaloPsaCredentialSta
             <span>Client ID: {status.clientId}</span>
           </div>
         )}
+
+        {status.configured && <TestConnectionButton testUrl="/api/integrations/halopsa/test" />}
 
         {status.configured &&
           (!confirming ? (

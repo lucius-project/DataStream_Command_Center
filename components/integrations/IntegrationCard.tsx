@@ -5,12 +5,13 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Settings2 } from "lucide-react";
 
-type Tone = "ok" | "mocked" | "off";
+type Tone = "ok" | "mocked" | "off" | "error";
 
 const BADGE: Record<Tone, string> = {
   ok: "bg-status-ok-dim text-status-ok border-status-ok/40",
   mocked: "bg-status-info-dim text-status-info border-status-info/40",
   off: "bg-panel-raised text-text-faint border-border-strong",
+  error: "bg-status-critical-dim text-status-critical border-status-critical/40",
 };
 
 // Minimized by default — icon, name, and status are enough for an

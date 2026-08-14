@@ -6,6 +6,7 @@ import { Mail, ChevronDown, ChevronUp } from "lucide-react";
 import { IntegrationCard } from "./IntegrationCard";
 import { InstructionsToggle } from "./InstructionsToggle";
 import { MicrosoftCredentialForm } from "./MicrosoftCredentialForm";
+import { TestConnectionButton } from "./TestConnectionButton";
 import { ClientText } from "@/components/ClientText";
 import type { MicrosoftConnectionInfo, MicrosoftCredentialStatus } from "@/lib/services/integrations";
 
@@ -91,9 +92,9 @@ export function MicrosoftConnectionCard({
     <IntegrationCard
       icon={Mail}
       name="Microsoft 365 / Outlook"
-      statusLabel="Connected"
-      tone="ok"
-      description="Live — powers Inbox Command."
+      statusLabel={info.healthy ? "Connected" : "Disconnected"}
+      tone={info.healthy ? "ok" : "error"}
+      description={info.healthy ? "Live — powers Inbox Command." : `Connection issue: ${info.healthError}`}
     >
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1 font-data text-xs text-text-muted">
@@ -109,6 +110,8 @@ export function MicrosoftConnectionCard({
             />
           </span>
         </div>
+
+        <TestConnectionButton testUrl="/api/integrations/microsoft/test" />
 
         {!confirming ? (
           <button

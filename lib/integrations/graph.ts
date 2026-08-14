@@ -22,6 +22,13 @@ function getGraphClient(accessToken: string): Client {
   });
 }
 
+// Cheapest real proof a token still works — GET /me returns the signed-in
+// user's own profile, no mailbox read required. Used for /integrations'
+// live connection-health check, not for anything Inbox Command itself needs.
+export async function testGraphConnection(accessToken: string): Promise<void> {
+  await getGraphClient(accessToken).api("/me").select("id").get();
+}
+
 const MESSAGE_SELECT =
   "id,subject,bodyPreview,from,receivedDateTime,isRead,flag";
 

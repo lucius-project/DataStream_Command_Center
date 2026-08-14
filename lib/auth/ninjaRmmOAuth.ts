@@ -1,14 +1,15 @@
 // NinjaRMM OAuth2 authorization-code flow — hand-rolled equivalent of
 // lib/auth/msal.ts's exported surface (same function shapes), since
-// NinjaRMM isn't Azure/MSAL. Confirmed live against this account, twice:
+// NinjaRMM isn't Azure/MSAL. Confirmed live against this account:
 //   1. client_credentials is unavailable — no such grant type on the app
 //      ("unauthorized_client" against four different request shapes).
-//   2. The "Add client app" wizard shows no Client Secret field at all —
-//      this account's authorization-code apps are PKCE public clients
-//      (RFC 7636), confirmed against NinjaOne's own separate
-//      "Authorization Code Flow with PKCE" docs page. PKCE itself is a
-//      standardized, universal OAuth2 extension — no vendor-specific
-//      guessing needed for the code_verifier/code_challenge mechanics.
+//   2. The "Native"/"Single Page" app platforms in NinjaRMM's wizard
+//      produce PKCE public clients with no Client Secret field at all
+//      (RFC 7636, confirmed against NinjaOne's own "Authorization Code
+//      Flow with PKCE" docs page); the "Web" platform instead issues a
+//      real Client Secret (confidential client). Both are supported
+//      here — see withClientSecret below — since which one an account
+//      gets isn't something to assume.
 //
 // Endpoints and the "offline_access" scope (needed to actually receive
 // a refresh token) are confirmed via a real NinjaOne-published
@@ -116,18 +117,31 @@ async function storeTokens(data: TokenResponse, existingRefreshToken?: string): 
   });
 }
 
-// No client_secret — PKCE's code_verifier is the proof of possession
-// instead, since this account's apps are public clients.
+// PKCE's code_verifier is the proof of possession for a public client
+// (no secret). Some accounts' "Web" app type instead issues a real
+// Client Secret (confidential client) — when one is stored, it's sent
+// too; NinjaRMM's /ws/oauth/token accepts either shape, and a public
+// client's credential row simply has no secret to add here.
+function withClientSecret(params: URLSearchParams, encryptedClientSecret: string | null): URLSearchParams {
+  if (encryptedClientSecret) {
+    params.set("client_secret", decryptToken(encryptedClientSecret));
+  }
+  return params;
+}
+
 export async function exchangeCodeForTokens(code: string, codeVerifier: string): Promise<void> {
   const credential = await getCredential();
   const data = await requestToken(
-    new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: getRedirectUri(),
-      client_id: credential.clientId,
-      code_verifier: codeVerifier,
-    }),
+    withClientSecret(
+      new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: getRedirectUri(),
+        client_id: credential.clientId,
+        code_verifier: codeVerifier,
+      }),
+      credential.encryptedClientSecret,
+    ),
   );
   await storeTokens(data);
 }
@@ -140,11 +154,14 @@ async function refreshAccessToken(): Promise<void> {
   }
   const refreshToken = decryptToken(existing.encryptedRefreshToken);
   const data = await requestToken(
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      client_id: credential.clientId,
-    }),
+    withClientSecret(
+      new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: credential.clientId,
+      }),
+      credential.encryptedClientSecret,
+    ),
   );
   await storeTokens(data, refreshToken);
 }

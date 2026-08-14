@@ -9,6 +9,7 @@ import {
   getQuickBooksCredentialStatus,
   getQuickBooksConnectionInfo,
   getAnthropicCredentialStatus,
+  getSherwebCredentialStatus,
 } from "@/lib/services/integrations";
 import { MicrosoftConnectionCard } from "@/components/integrations/MicrosoftConnectionCard";
 import { HaloPsaConnectionCard } from "@/components/integrations/HaloPsaConnectionCard";
@@ -17,6 +18,7 @@ import { NinjaRmmConnectionCard } from "@/components/integrations/NinjaRmmConnec
 import { QuickBooksConnectionCard } from "@/components/integrations/QuickBooksConnectionCard";
 import { AnthropicConnectionCard } from "@/components/integrations/AnthropicConnectionCard";
 import { KeapIntegrationCard } from "@/components/integrations/KeapIntegrationCard";
+import { SherwebConnectionCard } from "@/components/integrations/SherwebConnectionCard";
 
 export default async function IntegrationsPage() {
   const [
@@ -29,6 +31,7 @@ export default async function IntegrationsPage() {
     quickBooksStatus,
     quickBooksInfo,
     anthropicStatus,
+    sherwebStatus,
   ] = await Promise.all([
     getMicrosoftConnectionInfo(),
     getMicrosoftCredentialStatus(),
@@ -39,6 +42,7 @@ export default async function IntegrationsPage() {
     getQuickBooksCredentialStatus(),
     getQuickBooksConnectionInfo(),
     getAnthropicCredentialStatus(),
+    getSherwebCredentialStatus(),
   ]);
   const redirectUri =
     process.env.MICROSOFT_REDIRECT_URI || "http://localhost:3001/api/auth/microsoft/callback";
@@ -78,6 +82,7 @@ export default async function IntegrationsPage() {
             redirectUri={quickBooksRedirectUri}
             credentialStatus={quickBooksStatus}
           />
+          <SherwebConnectionCard status={sherwebStatus} />
         </IntegrationCategory>
 
         <IntegrationCategory title="AI">

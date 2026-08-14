@@ -6,6 +6,7 @@ import { Server, ChevronDown, ChevronUp } from "lucide-react";
 import { IntegrationCard } from "./IntegrationCard";
 import { InstructionsToggle } from "./InstructionsToggle";
 import { NinjaRmmCredentialForm } from "./NinjaRmmCredentialForm";
+import { TestConnectionButton } from "./TestConnectionButton";
 import { ClientText } from "@/components/ClientText";
 import type { NinjaRmmCredentialStatus, NinjaRmmConnectionInfo } from "@/lib/services/integrations";
 
@@ -24,11 +25,12 @@ export function NinjaRmmConnectionCard({
   const router = useRouter();
   const steps = [
     "In NinjaRMM, go to Administration → Apps → API → Client app IDs and create (or edit) an API application.",
-    `Set its Redirect URI to: ${redirectUri} — the platform-preset default won't work.`,
+    "Application platform: choose \"Web (PHP, Java, .NET Core, etc.)\" — this app is a real backend server, not a mobile app or browser-only JS, and it can securely store a Client Secret. (\"Native\"/\"Single Page\" also work — they just produce a no-secret PKCE client instead, which this app supports too — but \"Web\" is the confirmed-working setup.)",
+    `Set its Redirect URI to exactly: ${redirectUri} — a mismatch here fails with "Invalid redirect_uri" and, confusingly, NinjaRMM's own error page for that then 404s instead of showing a clear message.`,
     "Under Scopes, check only \"Monitoring\" — read-only access to devices and organization structure. This app never modifies devices.",
-    "Under Allowed grant types, check \"Refresh token\" — needed so this app can stay connected without you having to log in again every hour.",
-    "Note the Client ID and your region's API base URL (e.g. app, eu, oc, or ca.ninjarmm.com). Most accounts don't get a Client Secret for this app type — that's expected, leave it blank below.",
-    "Enter the API base URL and Client ID below, then click Connect NinjaRMM and log in once.",
+    "IMPORTANT — under Allowed grant types, check BOTH \"Authorization code\" AND \"Refresh token.\" Missing Refresh token is easy to do and fails later with a confusing \"Invalid scope offline_access for client\" error at login, not at creation time — it's the single most common way this setup breaks. If you ever edit an existing app afterward instead of creating a new one, NinjaRMM's Edit dialog only shows \"Refresh token\" as a checkbox (Authorization code isn't shown there, it's implicit) — check it and click Update if it's off.",
+    "Note the Client ID, and the Client Secret if NinjaRMM generates one for this app type (not all accounts/platforms get one — that's fine either way).",
+    "Enter the API base URL, Client ID, and Client Secret (if you have one) below, then click Connect NinjaRMM and log in once.",
   ];
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -94,9 +96,9 @@ export function NinjaRmmConnectionCard({
     <IntegrationCard
       icon={Server}
       name="NinjaRMM"
-      statusLabel="Connected"
-      tone="ok"
-      description="Live — powers Device Health."
+      statusLabel={info.healthy ? "Connected" : "Disconnected"}
+      tone={info.healthy ? "ok" : "error"}
+      description={info.healthy ? "Live — powers Device Health." : `Connection issue: ${info.healthError}`}
     >
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1 font-data text-xs text-text-muted">
@@ -108,6 +110,8 @@ export function NinjaRmmConnectionCard({
             />
           </span>
         </div>
+
+        <TestConnectionButton testUrl="/api/integrations/ninjarmm/test" />
 
         {!confirming ? (
           <button

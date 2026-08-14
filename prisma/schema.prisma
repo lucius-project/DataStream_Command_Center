@@ -194,6 +194,20 @@ model AnthropicCredential {
   updatedAt       DateTime @updatedAt
 }
 
+// Sherweb (Microsoft CSP/distributor — M365, Keeper, Nerdio licensing).
+// Vendor Licensing Phase 1: credential plumbing only, no sync yet. No
+// instanceUrl like HaloPSA — Sherweb's Service Provider API is a fixed
+// global endpoint (api.sherweb.com), not per-tenant. Client ID is not
+// secret on its own (same reasoning as HaloPsaCredential.clientId), but
+// the secret and subscription key are both encrypted the same way.
+model SherwebCredential {
+  id                       String   @id @default("sherweb")
+  clientId                 String
+  encryptedClientSecret    String
+  encryptedSubscriptionKey String
+  updatedAt                DateTime @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
