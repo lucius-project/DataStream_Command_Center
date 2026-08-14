@@ -51,7 +51,6 @@ import {
 import { TechPerformanceRow } from "@/components/tech-performance/TechPerformanceRow";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
 import { OrgKpiStrip } from "@/components/tech-performance/OrgKpiStrip";
-import { ServiceDeskHealthSection } from "@/components/service-desk/ServiceDeskHealthSection";
 import { NeedsAttentionSection } from "@/components/service-desk/NeedsAttentionSection";
 import { SlaAtRiskSection } from "@/components/service-desk/SlaAtRiskSection";
 import { ManagerActionQueue } from "@/components/service-desk/ManagerActionQueue";
@@ -206,7 +205,7 @@ export default async function TechPerformancePage() {
     <div className="mx-auto max-w-5xl p-4 md:p-6">
       <h1 className="font-display text-2xl font-semibold text-text">Tech Performance</h1>
       <p className="mt-1 text-sm text-text-muted">
-        Service desk health, then team and per-tech detail — everything a Service Desk Manager needs today.
+        Morning Brief, then team and per-tech detail — everything a Service Desk Manager needs today.
       </p>
 
       <div className="mt-4">
@@ -220,10 +219,6 @@ export default async function TechPerformancePage() {
           ))}
         </div>
       )}
-
-      <div className="mt-6">
-        <ServiceDeskHealthSection snapshot={healthSnapshot} weekAgo={healthWeekAgo} settings={kpiSettings} />
-      </div>
 
       <div className="mt-6">
         <NeedsAttentionSection alerts={alerts} knownTechs={KNOWN_TECHS} />

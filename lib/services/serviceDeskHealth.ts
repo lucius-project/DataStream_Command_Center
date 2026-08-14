@@ -17,11 +17,9 @@ import type { TicketPriority, ServiceDeskHealthDaily } from "@/app/generated/pri
 import { businessHoursElapsed, startOfToday } from "@/lib/dateUtils";
 import { bandHigherIsBetter, bandLowerIsBetter, type KpiStatus } from "@/lib/kpiStatus";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
-import type { Kpi, KpiTrend } from "./businessHealth";
 import { getCallActivitySummary } from "./callActivity";
 import { getBacklogBreakdown, getTechActionableAging, getStaleTickets, type BacklogBreakdown, type TechActionableAging } from "./operations";
-import { buildTrend } from "./techPerformance";
-import { getKpiSettings, type KpiSettings } from "./kpiSettings";
+import { getKpiSettings } from "./kpiSettings";
 import { median } from "./stats";
 
 // Below this many eligible tickets, a percentage is misleadingly precise
@@ -454,23 +452,6 @@ export function agingStatusColor(aging: TechActionableAging, green: number, yell
   return bandLowerIsBetter(aging.agingOver24h, green, yellow);
 }
 
-function slaDisplay(metric: SlaMetric): string {
-  if (metric.status === "available" && metric.pct !== null) return `${Math.round(metric.pct)}%`;
-  if (metric.status === "insufficient_sample") return "—";
-  return "—";
-}
-
-function slaDetail(metric: SlaMetric, noun: string, minSlaSample: number): string {
-  if (metric.status === "available") {
-    const medianText = metric.medianHours !== null ? ` · median ${Math.round(metric.medianHours * 10) / 10}h` : "";
-    return `${metric.met} of ${metric.eligible} ${noun} met target${medianText}`;
-  }
-  if (metric.status === "insufficient_sample") {
-    return `Only ${metric.eligible} eligible ${noun} — below the ${minSlaSample}-ticket minimum sample`;
-  }
-  return `No ${noun} with a target yet`;
-}
-
 // The ServiceDeskHealthDaily row from exactly 7 days ago, or null if
 // none exists yet (before this table has 7+ days of real history — see
 // its schema comment). Comparing to the same weekday rather than
@@ -493,106 +474,6 @@ export async function getServiceDeskHealthYesterday(): Promise<ServiceDeskHealth
   const yesterday = startOfToday();
   yesterday.setDate(yesterday.getDate() - 1);
   return prisma.serviceDeskHealthDaily.findUnique({ where: { date: yesterday } });
-}
-
-function pctDelta(delta: number): string {
-  return `${delta >= 0 ? "+" : ""}${Math.round(delta * 10) / 10}pts vs 7d ago`;
-}
-
-function countDelta(delta: number): string {
-  return `${delta >= 0 ? "+" : ""}${Math.round(delta)} vs 7d ago`;
-}
-
-// Health Score isn't Kpi-shaped (see getServiceDeskHealthKpis' comment),
-// so its trend is computed separately here rather than folded into that
-// function, and rendered inline inside HealthScoreTile.tsx.
-export function getHealthScoreTrend(healthScore: HealthScoreResult, weekAgo: ServiceDeskHealthDaily | null): KpiTrend | undefined {
-  if (healthScore.score === null) return undefined;
-  return buildTrend(healthScore.score, weekAgo?.healthScore ?? null, "up", countDelta, 0);
-}
-
-// The four standard-shaped tiles (Response SLA, Resolution SLA, Aging,
-// Answer Rate) — Net Ticket Change and Health Score get their own
-// dedicated components instead (see components/service-desk/) since
-// "make this visually prominent" / "never a mystery score" both need
-// more than the generic KpiTile shape offers.
-//
-// weekAgo is optional and, when provided, threads a `.trend` onto each
-// tile via buildTrend (techPerformance.ts) — the same "omit rather than
-// fabricate when there's no honest prior value" rule KpiTile already
-// renders correctly. Direction is set explicitly per metric, not
-// defaulted: higher is better for SLA/Answer Rate, lower is better for
-// Aging — copy-pasting one direction across all four would color a
-// worsening Aging trend green, exactly what "don't use generic trend
-// colouring" warns against.
-export function getServiceDeskHealthKpis(
-  s: ServiceDeskHealthSnapshot,
-  weekAgo: ServiceDeskHealthDaily | null | undefined,
-  settings: KpiSettings,
-): Kpi[] {
-  const prior = weekAgo ?? null;
-  const responseSlaTrend: KpiTrend | undefined =
-    s.responseSla.pct !== null ? buildTrend(s.responseSla.pct, prior?.responseSlaPct ?? null, "up", pctDelta) : undefined;
-  const resolutionSlaTrend: KpiTrend | undefined =
-    s.resolutionSla.pct !== null ? buildTrend(s.resolutionSla.pct, prior?.resolutionSlaPct ?? null, "up", pctDelta) : undefined;
-  const agingTrend = buildTrend(s.aging.agingOver24h, prior?.agingOver24h ?? null, "down", countDelta, 0);
-  const answerRateTrend: KpiTrend | undefined =
-    s.answerRate.status === "available"
-      ? buildTrend(s.answerRate.pct!, prior?.phoneAnswerRatePct ?? null, "up", pctDelta)
-      : undefined;
-
-  return [
-    {
-      key: "responseSla",
-      label: "Response SLA",
-      value: s.responseSla.pct,
-      display: slaDisplay(s.responseSla),
-      status: slaStatusColor(s.responseSla, settings.responseSlaGreenPct, settings.responseSlaYellowPct),
-      detail: slaDetail(s.responseSla, "open tickets", settings.minSlaSample),
-      benchmark: "default target 90%, not a universal industry figure",
-      href: "/operations",
-      trend: responseSlaTrend,
-    },
-    {
-      key: "resolutionSla",
-      label: "Resolution SLA",
-      value: s.resolutionSla.pct,
-      display: slaDisplay(s.resolutionSla),
-      status: slaStatusColor(s.resolutionSla, settings.resolutionSlaGreenPct, settings.resolutionSlaYellowPct),
-      detail: slaDetail(s.resolutionSla, `closures in ${settings.resolutionWindowDays}d`, settings.minSlaSample),
-      benchmark: "default target 90%, not a universal industry figure",
-      href: "/operations",
-      trend: resolutionSlaTrend,
-    },
-    {
-      key: "techAging",
-      label: "Tech-Actionable Aging",
-      value: s.aging.agingOver24h,
-      display: `${s.aging.agingOver24h}`,
-      status: agingStatusColor(s.aging, settings.agingGreenCount, settings.agingYellowCount),
-      detail: `${s.aging.byBucket["1-3d"]} 1-3d · ${s.aging.byBucket["3-7d"]} 3-7d · ${s.aging.byBucket["7d+"]} 7d+ · excludes tickets waiting on the customer/vendor`,
-      benchmark: "0 aging past 24 business hours is healthy",
-      href: "/operations",
-      trend: agingTrend,
-    },
-    {
-      key: "answerRate",
-      label: "Call Answer Rate",
-      value: s.answerRate.pct,
-      display: s.answerRate.status === "available" ? `${Math.round(s.answerRate.pct!)}%` : "—",
-      status:
-        s.answerRate.status === "available"
-          ? bandHigherIsBetter(s.answerRate.pct!, settings.answerRateGreenPct, settings.answerRateYellowPct)
-          : "unavailable",
-      detail:
-        s.answerRate.status === "available"
-          ? `${s.answerRate.answered} of ${s.answerRate.total} inbound calls answered today`
-          : "No inbound calls yet today",
-      benchmark: "healthy range 90%+",
-      href: "/calls",
-      trend: answerRateTrend,
-    },
-  ];
 }
 
 // ---------------------------------------------------------------------------
