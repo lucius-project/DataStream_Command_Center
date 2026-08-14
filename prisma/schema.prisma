@@ -908,3 +908,42 @@ model StaffUser {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 }
+
+// SOP tracking (Phase B of the staff login/RBAC work) — structured
+// entries authored in-app — a title + description (body) plus one or
+// more attached files (SopFile below; Word for drafts, PDF for final,
+// distinguished by extension, not a separate status field). roles is a
+// comma-separated list of AppRole values (SQLite has no native array
+// column type — same serialized-list pattern this schema already uses
+// elsewhere, e.g. TicketSnapshot.ticket_tags), read by
+// lib/services/sops.ts. taskArea is deliberately free text, not a
+// rigid enum — the set of task areas isn't known/fixed up front.
+model SopEntry {
+  id        String     @id @default(cuid())
+  title     String
+  body      String
+  taskArea  String?
+  roles     String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  files     SopFile[]
+}
+
+// One uploaded file per row, many per SopEntry. storagePath is relative
+// to data/sop-files/ (see lib/services/sopFiles.ts) — files live on
+// local disk, same "local-first" pattern as the SQLite DB itself
+// (data/dev.db), never in public/ (that's served unauthenticated by
+// Next.js directly, and these are role-gated — see
+// app/api/sops/[id]/files/[fileId]/route.ts for the actual boundary).
+model SopFile {
+  id         String   @id @default(cuid())
+  sopEntryId String
+  sopEntry   SopEntry @relation(fields: [sopEntryId], references: [id], onDelete: Cascade)
+  fileName   String
+  mimeType   String
+  sizeBytes  Int
+  storagePath String
+  createdAt  DateTime @default(now())
+
+  @@index([sopEntryId])
+}

@@ -16,6 +16,7 @@ import {
   PhoneCall,
   MonitorCheck,
   Settings,
+  FileText,
 } from "lucide-react";
 
 import type { RankedRole } from "@/lib/auth/roleRankShared";
@@ -42,6 +43,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/command-flow", label: "Command Flow", icon: ListChecks, status: "active", group: "Daily", minRole: "SERVICE_MANAGER" },
   { href: "/focus", label: "Focus Mode", icon: Timer, status: "active", group: "Daily" },
   { href: "/runbooks", label: "Runbooks", icon: BookOpen, status: "active", group: "Runbooks", minRole: "SERVICE_MANAGER" },
+  { href: "/sops", label: "SOPs", icon: FileText, status: "active", group: "Runbooks" },
   { href: "/clients", label: "Client Profitability", icon: BarChart3, status: "active", group: "Growth", minRole: "CEO" },
   { href: "/tech-performance", label: "Tech Performance", icon: Gauge, status: "active", group: "Growth" },
   { href: "/devices", label: "Device Health", icon: MonitorCheck, status: "active", group: "Growth", minRole: "SERVICE_MANAGER" },
