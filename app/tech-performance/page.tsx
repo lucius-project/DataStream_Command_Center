@@ -110,11 +110,16 @@ export default async function TechPerformancePage() {
   // (Service Delivery/Work Management categories) and each card's own
   // stale/ticket drill-downs — same DB-only, no-extra-HaloPSA-calls
   // discipline as the rest of this page.
-  const [staleTickets, ticketsByTech, remoteAnalytics] = await Promise.all([
+  const [staleTickets, ticketsByTech, remoteAnalytics, ninjaDevices] = await Promise.all([
     getStaleTickets(),
     getTicketsByTech(),
     getRemoteSessionAnalytics(),
+    prisma.ninjaDevice.findMany({ select: { ninjaDeviceId: true, displayName: true } }),
   ]);
+  // For Activity Timeline's remote-session entries — same lookup pattern
+  // as remoteSessions.ts's own deviceById, fetched once here rather than
+  // once per tech inside the render loop below.
+  const deviceNameById = new Map(ninjaDevices.map((d) => [d.ninjaDeviceId, d.displayName]));
   // Both depend on ticketsByTech above, so they can't join the batch —
   // but each is a handful of cheap, already-synced DB reads plus (for
   // sessions) two small unpersisted NinjaOne lookups, same cost profile
@@ -221,22 +226,6 @@ export default async function TechPerformancePage() {
       )}
 
       <div className="mt-6">
-        <NeedsAttentionSection alerts={alerts} knownTechs={KNOWN_TECHS} />
-      </div>
-
-      <div className="mt-6">
-        <SlaAtRiskSection tickets={slaAtRisk} knownTechs={KNOWN_TECHS} instanceUrl={instanceUrl} />
-      </div>
-
-      <div className="mt-6">
-        <ManagerActionQueue alerts={alerts} />
-      </div>
-
-      <div className="mt-6">
-        <CoachingSection insights={coachingInsights} />
-      </div>
-
-      <div className="mt-6">
         <h2 className="font-display text-sm font-medium text-text-muted">Team Detail</h2>
         {clientLinkCoverage.total > 0 && (
           <p className="mt-0.5 font-data text-[11px] text-text-faint">
@@ -280,6 +269,7 @@ export default async function TechPerformancePage() {
             callTicketMatches,
             sessionTicketMatches,
             ticketsByTech,
+            deviceNameById,
           );
           const remote = remoteByTech.get(tech.person as Tech) ?? {
             tech: tech.person as Tech,
@@ -315,6 +305,22 @@ export default async function TechPerformancePage() {
             />
           );
         })}
+      </div>
+
+      <div className="mt-6">
+        <NeedsAttentionSection alerts={alerts} knownTechs={KNOWN_TECHS} />
+      </div>
+
+      <div className="mt-6">
+        <SlaAtRiskSection tickets={slaAtRisk} knownTechs={KNOWN_TECHS} instanceUrl={instanceUrl} />
+      </div>
+
+      <div className="mt-6">
+        <ManagerActionQueue alerts={alerts} />
+      </div>
+
+      <div className="mt-6">
+        <CoachingSection insights={coachingInsights} />
       </div>
     </div>
   );

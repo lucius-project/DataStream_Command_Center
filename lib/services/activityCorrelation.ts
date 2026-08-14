@@ -508,6 +508,12 @@ export function getActivityTimeline(
   callMatches: CallTicketMatch[],
   sessionMatches: SessionTicketMatch[],
   ticketsByTech: Map<Tech, TicketSnapshot[]>,
+  // NinjaOne device id -> its synced displayName (NinjaDevice, see
+  // remoteSessions.ts's own deviceById for the same lookup pattern) —
+  // fetched once by the caller, not re-queried per tech. A session whose
+  // device id doesn't resolve (device deleted/unsynced) falls back to a
+  // neutral placeholder rather than a guessed name.
+  deviceNameById: Map<string, string> = new Map(),
   range: { start: Date; end: Date } = { start: startOfWeek(), end: endOfWeek() },
 ): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
@@ -529,11 +535,12 @@ export function getActivityTimeline(
 
   for (const m of sessionMatches) {
     if (m.tech !== tech || !m.session.startedAt) continue;
+    const deviceName = m.session.ninjaDeviceId ? (deviceNameById.get(m.session.ninjaDeviceId) ?? "unknown device") : "unknown device";
     entries.push({
       id: `session-${m.session.id}`,
       type: "remote_session",
       at: m.session.startedAt,
-      primary: "Remote session",
+      primary: `Remote session — ${deviceName}`,
       secondary: m.session.durationSeconds ? hoursMinutesLabel(m.session.durationSeconds) : "in progress",
       tertiary: m.ticket
         ? `${m.tier}${m.ambiguous ? " · ambiguous" : ""} → ${m.ticket.haloTicketId} — inferred, not confirmed`
@@ -559,7 +566,9 @@ export function getActivityTimeline(
     });
   }
 
-  return entries.sort((a, b) => a.at.getTime() - b.at.getTime());
+  // Newest first — a manager reviewing this week's activity wants to see
+  // what just happened at the top, not scroll to the bottom for it.
+  return entries.sort((a, b) => b.at.getTime() - a.at.getTime());
 }
 
 // Org-level health indicator for the remote<->ticket join's manual link
