@@ -28,7 +28,13 @@ function requiredEnv(name: string): string {
 
 // Credentials configured on the Integrations page (encrypted in the DB)
 // take precedence; .env is the fallback for anyone who prefers that.
-async function resolveMicrosoftCredentials(): Promise<{
+// Exported for lib/auth/staffMsal.ts's identity-only sign-in flow, which
+// reuses this same Entra app registration but must not touch this
+// file's getMsalClient()/buildCachePlugin() — that cache plugin writes
+// into the single shared OAuthToken row Inbox Command's mailbox
+// connection owns, and a second, unrelated login flow persisting into
+// the same row would corrupt it.
+export async function resolveMicrosoftCredentials(): Promise<{
   clientId: string;
   tenantId: string;
   clientSecret: string;

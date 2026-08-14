@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SlidersHorizontal, TrendingUp } from "lucide-react";
 import { isConnected } from "@/lib/auth/msal";
+import { requireRole } from "@/lib/auth/roleRank";
 import { syncInboxFromGraph, getTriageQueue } from "@/lib/services/inbox";
 import { TriageCard } from "@/components/inbox/TriageCard";
 
@@ -9,6 +10,7 @@ export default async function InboxPage({
 }: {
   searchParams: Promise<{ connected?: string; connectError?: string }>;
 }) {
+  await requireRole("SERVICE_MANAGER");
   const params = await searchParams;
   const connected = await isConnected();
 

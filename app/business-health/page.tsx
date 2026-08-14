@@ -1,3 +1,4 @@
+import { requireRole } from "@/lib/auth/roleRank";
 import { withComputeThrottle } from "@/lib/integrations/haloShared";
 import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halopsa";
 import { syncDevices } from "@/lib/integrations/ninjaRmm";
@@ -31,6 +32,7 @@ async function syncBundle(): Promise<string[]> {
 }
 
 export default async function BusinessHealthPage() {
+  await requireRole("SERVICE_MANAGER");
   const syncErrors = await syncBundle();
   const [snapshot, anthropicStatus] = await Promise.all([
     getBusinessHealthSnapshot(),

@@ -1,7 +1,9 @@
 import { getRunbookBoard } from "@/lib/services/runbooks";
+import { requireRole } from "@/lib/auth/roleRank";
 import { RunbookBoard } from "@/components/runbooks/RunbookBoard";
 
 export default async function RunbooksPage() {
+  await requireRole("SERVICE_MANAGER");
   const categories = await getRunbookBoard();
 
   return (

@@ -1,4 +1,5 @@
 import { syncCallActivity } from "@/lib/integrations/unitedCloud";
+import { requireRole } from "@/lib/auth/roleRank";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import {
   getRecentCalls,
@@ -18,6 +19,7 @@ import { MissedCallRecoveryPanel } from "@/components/calls/MissedCallRecoveryPa
 import { CallsPerClientPanel } from "@/components/calls/CallsPerClientPanel";
 
 export default async function CallActivityPage() {
+  await requireRole("SERVICE_MANAGER");
   const sync = await syncCallActivity();
   const [rawCalls, credentialStatus, directoryResult] = await Promise.all([
     getRecentCalls(),

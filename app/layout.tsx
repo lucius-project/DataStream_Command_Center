@@ -4,6 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
 import { MobileNav } from "@/components/MobileNav";
+import { getSession } from "@/lib/auth/staffSession";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -39,7 +40,14 @@ const themeInitScript = `
 })();
 `;
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const session = await getSession();
+  // No session, or signed in but not yet role-assigned (/pending) — no
+  // nav chrome at all. There's nothing a technician-to-be can navigate
+  // to yet, and showing a sidebar full of links that only redirect away
+  // reads as broken rather than as "wait for your role."
+  const role = session?.role ?? null;
+
   return (
     <html
       lang="en"
@@ -49,11 +57,17 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Script id="theme-init" strategy="beforeInteractive">
           {themeInitScript}
         </Script>
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <MobileNav />
+        {role ? (
+          <>
+            <Sidebar role={role} />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <MobileNav role={role} />
+              <main className="min-w-0 flex-1">{children}</main>
+            </div>
+          </>
+        ) : (
           <main className="min-w-0 flex-1">{children}</main>
-        </div>
+        )}
       </body>
     </html>
   );

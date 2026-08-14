@@ -1,7 +1,9 @@
 import { getCommandFlowQueue } from "@/lib/services/commandFlow";
+import { requireRole } from "@/lib/auth/roleRank";
 import { CommandFlowView } from "@/components/command-flow/CommandFlowView";
 
 export default async function CommandFlowPage() {
+  await requireRole("SERVICE_MANAGER");
   const queue = await getCommandFlowQueue();
 
   return (

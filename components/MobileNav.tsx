@@ -4,8 +4,10 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { NavLinks } from "./NavLinks";
 import { ThemeToggle } from "./ThemeToggle";
+import { SignOutButton } from "./SignOutButton";
+import type { AppRole } from "@/app/generated/prisma/client";
 
-export function MobileNav() {
+export function MobileNav({ role }: { role: AppRole }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -23,8 +25,9 @@ export function MobileNav() {
         <span className="font-display text-sm font-semibold tracking-wide text-text">
           DATASTREAM
         </span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
           <ThemeToggle />
+          <SignOutButton />
         </div>
       </div>
 
@@ -45,7 +48,7 @@ export function MobileNav() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto px-2 py-4">
-              <NavLinks onNavigate={() => setOpen(false)} />
+              <NavLinks role={role} onNavigate={() => setOpen(false)} />
             </div>
           </div>
           <button

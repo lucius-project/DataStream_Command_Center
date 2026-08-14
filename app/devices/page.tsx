@@ -1,4 +1,5 @@
 import { syncDevices, syncRemoteSessions } from "@/lib/integrations/ninjaRmm";
+import { requireRole } from "@/lib/auth/roleRank";
 import { getDevices, getDeviceHealthSummary } from "@/lib/services/deviceHealth";
 import { getRemoteSessionAnalytics } from "@/lib/services/remoteSessions";
 import { getNinjaRmmConnectionInfo } from "@/lib/services/integrations";
@@ -6,6 +7,7 @@ import { DeviceRow } from "@/components/devices/DeviceRow";
 import { RemoteSupportPanel } from "@/components/devices/RemoteSupportPanel";
 
 export default async function DeviceHealthPage() {
+  await requireRole("SERVICE_MANAGER");
   const [sync, remoteSync] = await Promise.all([syncDevices(), syncRemoteSessions()]);
   const [devices, summary, connectionInfo, remoteAnalytics] = await Promise.all([
     getDevices(),

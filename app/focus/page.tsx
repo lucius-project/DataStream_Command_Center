@@ -1,8 +1,10 @@
 import { getRecentSessions } from "@/lib/services/focus";
+import { requireSignedIn } from "@/lib/auth/roleRank";
 import { FocusTimer } from "@/components/focus/FocusTimer";
 import { SessionLog } from "@/components/focus/SessionLog";
 
 export default async function FocusPage() {
+  await requireSignedIn();
   const sessions = await getRecentSessions();
 
   return (

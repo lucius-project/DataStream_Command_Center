@@ -1,7 +1,9 @@
 import { NavLinks } from "./NavLinks";
 import { ThemeToggle } from "./ThemeToggle";
+import { SignOutButton } from "./SignOutButton";
+import type { AppRole } from "@/app/generated/prisma/client";
 
-export function Sidebar() {
+export function Sidebar({ role }: { role: AppRole }) {
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-panel md:flex">
       <div className="flex h-16 items-center gap-2 border-b border-border px-4">
@@ -14,11 +16,14 @@ export function Sidebar() {
         </span>
       </div>
       <div className="flex-1 overflow-y-auto px-2 py-4">
-        <NavLinks />
+        <NavLinks role={role} />
       </div>
       <div className="flex items-center justify-between border-t border-border px-4 py-2">
         <span className="font-data text-[11px] text-text-faint">Local-first · v1</span>
-        <ThemeToggle />
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+          <SignOutButton />
+        </div>
       </div>
     </aside>
   );

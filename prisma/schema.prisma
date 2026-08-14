@@ -874,3 +874,37 @@ model TechRoleConfig {
   expectedWeeklyHours Float    @default(40)
   updatedAt           DateTime @updatedAt
 }
+
+// ---------------------------------------------------------------------------
+// Staff Login & Access Control
+// ---------------------------------------------------------------------------
+
+// App-access permission level — deliberately a separate enum/name from
+// TechRole above (that's a performance-scoring tier, e.g. junior/senior;
+// this is "what can this signed-in person open"). SDR is reserved for
+// the future CRM/Sales area — no page is gated to it yet.
+enum AppRole {
+  TECHNICIAN
+  SERVICE_MANAGER
+  CEO
+  SDR
+}
+
+// One row per person who has ever signed in with Microsoft 365 (see
+// lib/auth/staffSession.ts). role is nullable: a brand-new sign-in
+// exists here but can't see anything until a CEO assigns one via
+// /admin/users — except the very first sign-in ever, which becomes CEO
+// automatically (someone has to be able to get in and assign everyone
+// else). techPerson links to KNOWN_TECHS (lib/integrations/halopsa.ts)
+// when role = TECHNICIAN, so their /tech-performance view can be
+// filtered to just their own card.
+model StaffUser {
+  id          String    @id @default(cuid())
+  email       String    @unique
+  name        String
+  role        AppRole?
+  techPerson  String?
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireRole } from "@/lib/auth/roleRank";
 import { syncClientProfitability } from "@/lib/integrations/haloClients";
 import { getClientProfitabilityReport, rollingAverageHours } from "@/lib/services/clientProfitability";
 import { SyncHistoryButton } from "@/components/clients/SyncHistoryButton";
@@ -11,6 +12,7 @@ function monthLabel(avg: ReturnType<typeof rollingAverageHours>): string {
 }
 
 export default async function ClientsPage() {
+  await requireRole("CEO");
   const sync = await syncClientProfitability();
   const clients = await getClientProfitabilityReport();
 

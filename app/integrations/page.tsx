@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { requireRole } from "@/lib/auth/roleRank";
 import {
   getMicrosoftConnectionInfo,
   getMicrosoftCredentialStatus,
@@ -21,6 +22,7 @@ import { KeapIntegrationCard } from "@/components/integrations/KeapIntegrationCa
 import { SherwebConnectionCard } from "@/components/integrations/SherwebConnectionCard";
 
 export default async function IntegrationsPage() {
+  await requireRole("CEO");
   const [
     microsoft,
     credentialStatus,

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { requireRole } from "@/lib/auth/roleRank";
 import { getClientProfile } from "@/lib/services/companyProfile";
 import { syncClientFinancials } from "@/lib/integrations/quickbooks";
 import { syncSeatReconciliation, fetchNinjaOrganizations } from "@/lib/integrations/ninjaRmm";
@@ -12,6 +13,7 @@ function money(value: number): string {
 }
 
 export default async function CompanyProfilePage({ params }: { params: Promise<{ id: string }> }) {
+  await requireRole("CEO");
   const { id } = await params;
 
   const [financialsSync, seatSync] = await Promise.all([

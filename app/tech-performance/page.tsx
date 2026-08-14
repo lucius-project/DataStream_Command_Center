@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { requireSignedIn } from "@/lib/auth/roleRank";
 import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halopsa";
 import { syncCallActivity } from "@/lib/integrations/unitedCloud";
 import { syncRemoteSessions } from "@/lib/integrations/ninjaRmm";
@@ -58,6 +59,7 @@ import { CoachingSection } from "@/components/service-desk/CoachingSection";
 import { MorningBriefCard } from "@/components/service-desk/MorningBriefCard";
 
 export default async function TechPerformancePage() {
+  const session = await requireSignedIn();
   const [ticketSync, timeGapSync, callSync, remoteSessionSync] = await Promise.all([
     syncTicketsFromHalo(),
     syncTeamTimeGaps(),
@@ -206,6 +208,95 @@ export default async function TechPerformancePage() {
     techScoreSyncError && `Trend history: ${techScoreSyncError}`,
   ].filter((e): e is string => Boolean(e));
 
+  // One row-building function reused by both the manager's full-team
+  // loop and the technician's own single-card view below — same data,
+  // just a different slice of `techs` gets rendered through it.
+  function techRow(tech: (typeof techs)[number]) {
+    const role = roleFor(tech.person, techRoleConfigs);
+    const serviceMetrics = serviceMetricsFor(serviceMetricsByTech, tech.person);
+    const scoreResult = scoreByTech.get(tech.person as Tech)!;
+    const scoreTrend = getTechScoreTrendArrow(scoreResult.score, techScoreWeekAgoByTech.get(tech.person as Tech) ?? null);
+    const cardData = buildTechCardTicketData(
+      ticketsFor(ticketsByTech, tech.person),
+      staleTicketsFor(staleByTech, tech.person),
+      serviceMetrics,
+    );
+    // remoteByTech always has an entry for every KNOWN_TECHS member
+    // (see getRemoteSessionAnalytics), so this fallback only
+    // matters if the roster ever drifts out of sync — same
+    // defensive pattern as techPerformanceScore.ts's *For helpers.
+    const callMatches = callMatchesFor(callTicketMatches, tech.person);
+    const callMatchRows = buildCallMatchRows(callMatches);
+    const sessionMatches = sessionMatchesFor(sessionTicketMatches, tech.person);
+    const sessionMatchRows = buildSessionMatchRows(sessionMatches);
+    const timeCoverage = summarizeTimeCoverage(timeCoverageByTech.get(tech.person as Tech) ?? []);
+    const timeCoverageRows = buildTimeCoverageRows(timeCoverage.days);
+    const timelineEntries = getActivityTimeline(
+      tech.person as Tech,
+      callTicketMatches,
+      sessionTicketMatches,
+      ticketsByTech,
+      deviceNameById,
+    );
+    const remote = remoteByTech.get(tech.person as Tech) ?? {
+      tech: tech.person as Tech,
+      techLabel: tech.person,
+      sessions: 0,
+      failedSessions: 0,
+      canceledSessions: 0,
+      grossSeconds: 0,
+      uniqueSeconds: 0,
+      durationStatus: "unavailable" as const,
+      medianDurationSeconds: null,
+      p90DurationSeconds: null,
+      businessHoursSessions: 0,
+      afterHoursSessions: 0,
+      uniqueDeviceIds: new Set<string>(),
+    };
+    return (
+      <TechPerformanceRow
+        key={tech.person}
+        tech={tech}
+        todayIndex={todayIndex}
+        role={role}
+        scoreResult={scoreResult}
+        scoreTrend={scoreTrend}
+        serviceMetrics={serviceMetrics}
+        cardData={cardData}
+        remote={remote}
+        callMatchRows={callMatchRows}
+        sessionMatchRows={sessionMatchRows}
+        timeCoverage={timeCoverage}
+        timeCoverageRows={timeCoverageRows}
+        timelineEntries={timelineEntries}
+      />
+    );
+  }
+
+  // Technician: only their own card, none of the team-aggregate
+  // sections below (Morning Brief, Needs Attention, SLA At Risk, Manager
+  // Action Queue, Coaching, org-wide strips) — those are all
+  // manager-framed signals about the whole desk, not this one person's
+  // own performance.
+  if (session.role === "TECHNICIAN") {
+    const myTech = techs.find((t) => t.person === session.techPerson);
+    return (
+      <div className="mx-auto max-w-5xl p-4 md:p-6">
+        <h1 className="font-display text-2xl font-semibold text-text">Your Performance</h1>
+        <p className="mt-1 text-sm text-text-muted">Same scoring and drill-downs your service manager sees for you.</p>
+        <div className="mt-4 flex flex-col gap-2">
+          {myTech ? (
+            techRow(myTech)
+          ) : (
+            <div className="rounded-md border border-border bg-panel-raised p-4 text-center text-sm text-text-muted">
+              No performance data found for your account yet.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-6">
       <h1 className="font-display text-2xl font-semibold text-text">Tech Performance</h1>
@@ -243,69 +334,7 @@ export default async function TechPerformancePage() {
         <TechOrgSummaryRow org={org} todayIndex={todayIndex} />
       </div>
 
-      <div className="mt-3 flex flex-col gap-2">
-        {techs.map((tech) => {
-          const role = roleFor(tech.person, techRoleConfigs);
-          const serviceMetrics = serviceMetricsFor(serviceMetricsByTech, tech.person);
-          const scoreResult = scoreByTech.get(tech.person as Tech)!;
-          const scoreTrend = getTechScoreTrendArrow(scoreResult.score, techScoreWeekAgoByTech.get(tech.person as Tech) ?? null);
-          const cardData = buildTechCardTicketData(
-            ticketsFor(ticketsByTech, tech.person),
-            staleTicketsFor(staleByTech, tech.person),
-            serviceMetrics,
-          );
-          // remoteByTech always has an entry for every KNOWN_TECHS member
-          // (see getRemoteSessionAnalytics), so this fallback only
-          // matters if the roster ever drifts out of sync — same
-          // defensive pattern as techPerformanceScore.ts's *For helpers.
-          const callMatches = callMatchesFor(callTicketMatches, tech.person);
-          const callMatchRows = buildCallMatchRows(callMatches);
-          const sessionMatches = sessionMatchesFor(sessionTicketMatches, tech.person);
-          const sessionMatchRows = buildSessionMatchRows(sessionMatches);
-          const timeCoverage = summarizeTimeCoverage(timeCoverageByTech.get(tech.person as Tech) ?? []);
-          const timeCoverageRows = buildTimeCoverageRows(timeCoverage.days);
-          const timelineEntries = getActivityTimeline(
-            tech.person as Tech,
-            callTicketMatches,
-            sessionTicketMatches,
-            ticketsByTech,
-            deviceNameById,
-          );
-          const remote = remoteByTech.get(tech.person as Tech) ?? {
-            tech: tech.person as Tech,
-            techLabel: tech.person,
-            sessions: 0,
-            failedSessions: 0,
-            canceledSessions: 0,
-            grossSeconds: 0,
-            uniqueSeconds: 0,
-            durationStatus: "unavailable" as const,
-            medianDurationSeconds: null,
-            p90DurationSeconds: null,
-            businessHoursSessions: 0,
-            afterHoursSessions: 0,
-            uniqueDeviceIds: new Set<string>(),
-          };
-          return (
-            <TechPerformanceRow
-              key={tech.person}
-              tech={tech}
-              todayIndex={todayIndex}
-              role={role}
-              scoreResult={scoreResult}
-              scoreTrend={scoreTrend}
-              serviceMetrics={serviceMetrics}
-              cardData={cardData}
-              remote={remote}
-              callMatchRows={callMatchRows}
-              sessionMatchRows={sessionMatchRows}
-              timeCoverage={timeCoverage}
-              timeCoverageRows={timeCoverageRows}
-              timelineEntries={timelineEntries}
-            />
-          );
-        })}
-      </div>
+      <div className="mt-3 flex flex-col gap-2">{techs.map((tech) => techRow(tech))}</div>
 
       <div className="mt-6">
         <NeedsAttentionSection alerts={alerts} knownTechs={KNOWN_TECHS} />

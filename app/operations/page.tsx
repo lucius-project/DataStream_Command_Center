@@ -1,8 +1,10 @@
 import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halopsa";
+import { requireRole } from "@/lib/auth/roleRank";
 import { getDispatchTickets, getLoadPerTech, getAttentionFlags, getTimeGaps } from "@/lib/services/operations";
 import { OperationsView } from "@/components/operations/OperationsView";
 
 export default async function OperationsPage() {
+  await requireRole("SERVICE_MANAGER");
   const [ticketSync, timeGapSync] = await Promise.all([syncTicketsFromHalo(), syncTeamTimeGaps()]);
   const [tickets, load, flags, timeGaps] = await Promise.all([
     getDispatchTickets(),

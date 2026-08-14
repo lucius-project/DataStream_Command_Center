@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/auth/roleRank";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import {
   getServiceDeskHealthSnapshot,
@@ -34,6 +35,7 @@ import { InsightCard } from "@/components/service-desk/CoachingSection";
 // summary. Every section below reuses an existing service/component; the
 // only new code is the assembly.
 export default async function TechPerformanceHuddlePage() {
+  await requireRole("SERVICE_MANAGER");
   const directory = await getContactDirectory().catch(() => null);
 
   const [healthSnapshot, healthWeekAgo, healthYesterday, slaAtRisk, backlog, staleTickets, kpiSettings, techRoleConfigs, haloCredential] =
