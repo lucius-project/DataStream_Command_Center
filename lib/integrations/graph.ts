@@ -130,3 +130,82 @@ export async function archiveMessage(accessToken: string, messageId: string): Pr
   const client = getGraphClient(accessToken);
   await client.api(`/me/messages/${messageId}/move`).post({ destinationId: "archive" });
 }
+
+export type ThreadMessage = {
+  conversationId: string;
+  subject: string;
+  bodyPreview: string;
+  direction: "received" | "sent";
+  from: string;
+  to: string;
+  date: string;
+};
+
+type RawThreadMessage = {
+  conversationId?: string;
+  subject?: string;
+  bodyPreview?: string;
+  from?: { emailAddress?: { name?: string; address?: string } };
+  toRecipients?: { emailAddress?: { name?: string; address?: string } }[];
+  receivedDateTime?: string;
+  sentDateTime?: string;
+};
+
+function recipientNames(recipients: RawThreadMessage["toRecipients"]): string {
+  return (recipients ?? [])
+    .map((r) => r.emailAddress?.name || r.emailAddress?.address)
+    .filter((n): n is string => Boolean(n))
+    .join(", ");
+}
+
+const THREAD_SELECT = "conversationId,subject,bodyPreview,from,toRecipients,receivedDateTime,sentDateTime";
+
+// Inbox + Sent Items from the last `sinceDays`, merged and time-sorted —
+// the raw material for "What am I forgetting?" (inboxForgetting.ts),
+// which needs both sides of a conversation to tell "they never answered"
+// from "I never answered." Two folder calls, not one flat /me/messages
+// query, because well-known-folder scoping is explicit and predictable
+// here — no ambiguity about which folders got included.
+export async function listRecentMailForReview(accessToken: string, sinceDays: number): Promise<ThreadMessage[]> {
+  const client = getGraphClient(accessToken);
+  const since = new Date();
+  since.setDate(since.getDate() - sinceDays);
+  const sinceIso = since.toISOString();
+
+  const [inboxRes, sentRes] = await Promise.all([
+    client
+      .api("/me/mailFolders/inbox/messages")
+      .select(THREAD_SELECT)
+      .filter(`receivedDateTime ge ${sinceIso}`)
+      .top(150)
+      .get(),
+    client
+      .api("/me/mailFolders/sentitems/messages")
+      .select(THREAD_SELECT)
+      .filter(`sentDateTime ge ${sinceIso}`)
+      .top(150)
+      .get(),
+  ]);
+
+  const inbox: ThreadMessage[] = (inboxRes.value ?? []).map((m: RawThreadMessage) => ({
+    conversationId: m.conversationId ?? "",
+    subject: m.subject || "(no subject)",
+    bodyPreview: m.bodyPreview || "",
+    direction: "received",
+    from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || "Unknown sender",
+    to: recipientNames(m.toRecipients),
+    date: m.receivedDateTime || new Date().toISOString(),
+  }));
+
+  const sent: ThreadMessage[] = (sentRes.value ?? []).map((m: RawThreadMessage) => ({
+    conversationId: m.conversationId ?? "",
+    subject: m.subject || "(no subject)",
+    bodyPreview: m.bodyPreview || "",
+    direction: "sent",
+    from: "You",
+    to: recipientNames(m.toRecipients),
+    date: m.sentDateTime || new Date().toISOString(),
+  }));
+
+  return [...inbox, ...sent].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}

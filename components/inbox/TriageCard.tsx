@@ -12,6 +12,8 @@ import {
   Volume2,
   Square,
   Settings2,
+  Hourglass,
+  Sparkles,
 } from "lucide-react";
 import type { InboxItem } from "@/app/generated/prisma/client";
 import { getVoicesAsync, resolvePreferredVoice, saveVoiceURI, stripUrlsForSpeech } from "@/lib/voice";
@@ -19,13 +21,25 @@ import { ClientText } from "@/components/ClientText";
 import { SNOOZE_PRESET_OPTIONS } from "@/lib/snoozePresets";
 
 type Mode = "idle" | "reply" | "delegate" | "snooze";
+export type StaffOption = { id: string; name: string };
 
-export function TriageCard({ item }: { item: InboxItem }) {
+export function TriageCard({
+  item,
+  staffUsers = [],
+  initialMode = "idle",
+}: {
+  item: InboxItem;
+  staffUsers?: StaffOption[];
+  initialMode?: Mode;
+}) {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>("idle");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [text, setText] = useState("");
+  const [delegatedToId, setDelegatedToId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [aiDrafting, setAiDrafting] = useState(false);
+  const [aiDraftError, setAiDraftError] = useState<string | null>(null);
 
   const [fullBody, setFullBody] = useState<string | null>(null);
   const [bodyLoading, setBodyLoading] = useState(false);
@@ -143,6 +157,29 @@ export function TriageCard({ item }: { item: InboxItem }) {
 
     const text = stripUrlsForSpeech(`Email from ${item.sender}. Subject: ${item.subject}. ${body}`);
     speakText(text, preferred);
+  }
+
+  // Text-only — fills the textarea for review/editing, doesn't save or
+  // send anything itself. Whatever's already typed is passed along as
+  // instructions, so a half-written note steers the draft instead of
+  // being discarded.
+  async function generateAiDraft() {
+    setAiDrafting(true);
+    setAiDraftError(null);
+    try {
+      const res = await fetch(`/api/inbox/${item.id}/draft-reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instructions: text.trim() || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to generate a draft.");
+      setText(data.draft);
+    } catch (err) {
+      setAiDraftError(err instanceof Error ? err.message : "Failed to generate a draft.");
+    } finally {
+      setAiDrafting(false);
+    }
   }
 
   async function submit(path: string, body: unknown) {
@@ -263,6 +300,7 @@ export function TriageCard({ item }: { item: InboxItem }) {
         <div className="mt-4 grid grid-cols-2 gap-2 md:flex md:flex-wrap">
           <ActionButton icon={Reply} label="Reply" onClick={() => setMode("reply")} />
           <ActionButton icon={Bot} label="Delegate" onClick={() => setMode("delegate")} />
+          <ActionButton icon={Hourglass} label="Waiting" disabled={busy} onClick={() => submit("waiting", {})} />
           <ActionButton icon={Clock} label="Snooze" onClick={() => setMode("snooze")} />
           <ActionButton
             icon={Check}
@@ -284,6 +322,16 @@ export function TriageCard({ item }: { item: InboxItem }) {
             rows={5}
             className="min-h-28 w-full resize-y rounded-md border border-border-strong bg-panel-raised px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
           />
+          <button
+            type="button"
+            disabled={aiDrafting}
+            onClick={generateAiDraft}
+            className="flex min-h-9 w-fit items-center gap-1.5 rounded-md border border-border-strong px-3 text-xs text-text-muted hover:border-accent hover:text-text disabled:opacity-50"
+          >
+            <Sparkles size={13} />
+            {aiDrafting ? "Drafting…" : text.trim() ? "Redraft with AI" : "Draft with AI"}
+          </button>
+          {aiDraftError && <div className="text-xs text-status-critical">{aiDraftError}</div>}
           <div className="flex gap-2">
             <button
               disabled={busy || !text.trim()}
@@ -299,18 +347,32 @@ export function TriageCard({ item }: { item: InboxItem }) {
 
       {mode === "delegate" && (
         <div className="mt-4 flex flex-col gap-2">
+          {staffUsers.length > 0 && (
+            <select
+              value={delegatedToId}
+              onChange={(e) => setDelegatedToId(e.target.value)}
+              className="min-h-10 rounded-md border border-border-strong bg-panel-raised px-2 text-sm text-text focus:border-accent focus:outline-none"
+            >
+              <option value="">Unassigned / AI agent</option>
+              {staffUsers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          )}
           <textarea
             autoFocus
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="What should the agent do with this?"
+            placeholder="What should they do with this?"
             rows={3}
             className="min-h-20 w-full resize-y rounded-md border border-border-strong bg-panel-raised px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
           />
           <div className="flex gap-2">
             <button
               disabled={busy || !text.trim()}
-              onClick={() => submit("delegate", { note: text })}
+              onClick={() => submit("delegate", { note: text, delegatedToId: delegatedToId || null })}
               className="min-h-11 flex-1 rounded-md bg-accent px-4 font-display text-sm font-medium text-bg hover:bg-accent-strong disabled:opacity-50"
             >
               Delegate

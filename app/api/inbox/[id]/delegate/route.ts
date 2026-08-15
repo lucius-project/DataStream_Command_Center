@@ -4,9 +4,9 @@ import { logDelegation } from "@/lib/services/delegation";
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { note } = (await request.json()) as { note?: string };
+  const { note, delegatedToId } = (await request.json()) as { note?: string; delegatedToId?: string | null };
   if (!note || !note.trim()) {
-    return NextResponse.json({ error: "A note for the agent is required." }, { status: 400 });
+    return NextResponse.json({ error: "A note is required." }, { status: 400 });
   }
 
   const item = await prisma.inboxItem.findUnique({ where: { id } });
@@ -14,10 +14,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "Inbox item not found." }, { status: 404 });
   }
 
+  if (delegatedToId) {
+    const assignee = await prisma.staffUser.findUnique({ where: { id: delegatedToId } });
+    if (!assignee) {
+      return NextResponse.json({ error: "Selected staff member not found." }, { status: 400 });
+    }
+  }
+
   await logDelegation("INBOX", id, note);
   const updated = await prisma.inboxItem.update({
     where: { id },
-    data: { status: "DELEGATED", delegateNote: note, clearedAt: new Date() },
+    data: { status: "DELEGATED", delegateNote: note, delegatedToId: delegatedToId || null, clearedAt: new Date() },
   });
   return NextResponse.json(updated);
 }
