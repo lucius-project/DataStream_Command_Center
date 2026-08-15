@@ -8,6 +8,7 @@ import { getHaloAccessToken } from "@/lib/integrations/halopsa";
 import { testUnitedCloudConnection } from "@/lib/integrations/unitedCloud";
 import { testAnthropicConnection } from "@/lib/integrations/anthropic";
 import { testSherwebConnection } from "@/lib/integrations/sherweb";
+import { getValidKeapAccessToken } from "@/lib/auth/keapOAuth";
 
 export type HealthResult = { healthy: true } | { healthy: false; healthError: string };
 
@@ -356,4 +357,50 @@ export async function saveSherwebCredential(input: {
 
 export async function removeSherwebCredential(): Promise<void> {
   await prisma.sherwebCredential.deleteMany({ where: { id: "sherweb" } });
+}
+
+export type KeapCredentialStatus = {
+  configured: boolean;
+  clientId: string;
+  hasSecret: boolean;
+};
+
+export async function getKeapCredentialStatus(): Promise<KeapCredentialStatus> {
+  const row = await prisma.keapCredential.findUnique({ where: { id: "keap" } });
+  if (!row) return { configured: false, clientId: "", hasSecret: false };
+  return { configured: true, clientId: row.clientId, hasSecret: true };
+}
+
+export async function saveKeapAppCredential(input: { clientId: string; clientSecret?: string }): Promise<void> {
+  const existing = await prisma.keapCredential.findUnique({ where: { id: "keap" } });
+  const encryptedClientSecret = input.clientSecret ? encryptToken(input.clientSecret) : existing?.encryptedClientSecret;
+
+  if (!encryptedClientSecret) {
+    throw new Error("Client secret is required.");
+  }
+
+  await prisma.keapCredential.upsert({
+    where: { id: "keap" },
+    update: { clientId: input.clientId, encryptedClientSecret },
+    create: { id: "keap", clientId: input.clientId, encryptedClientSecret },
+  });
+}
+
+// The per-connection OAuth result, separate from KeapCredential (the
+// app registration) — same split as getQuickBooksConnectionInfo/
+// QuickBooksCredential. Health check is intentionally token-only for
+// now (proves the refresh flow actually works, not just that a row
+// exists) rather than a real data call — Phase C1's live discovery
+// hasn't confirmed a safe, cheap Keap endpoint yet; upgrading this to a
+// real API-backed check is explicit follow-up work, not silently
+// skipped.
+export type KeapConnectionInfo =
+  | { connected: false }
+  | ({ connected: true; connectedAt: Date } & HealthResult);
+
+export async function getKeapConnectionInfo(): Promise<KeapConnectionInfo> {
+  const row = await prisma.keapOAuthToken.findUnique({ where: { id: "keap" } });
+  if (!row) return { connected: false };
+  const health = await runHealthCheck(() => getValidKeapAccessToken());
+  return { connected: true, connectedAt: row.connectedAt, ...health };
 }

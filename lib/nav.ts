@@ -17,9 +17,11 @@ import {
   MonitorCheck,
   Settings,
   FileText,
+  Receipt,
 } from "lucide-react";
 
 import type { RankedRole } from "@/lib/auth/roleRankShared";
+import type { AppRole } from "@/app/generated/prisma/client";
 
 export type NavItem = {
   href: string;
@@ -27,12 +29,17 @@ export type NavItem = {
   icon: LucideIcon;
   status: "active" | "soon";
   group: "Daily" | "Runbooks" | "Growth" | "Personal" | "System";
-  // Undefined = visible to every signed-in, role-assigned user (incl.
-  // SDR, which has no rank of its own — see lib/auth/roleRank.ts).
-  // Real access control lives in each page's own requireRole() call;
-  // this only decides whether the nav even shows a link, so a
-  // technician isn't looking at a link that just redirects them away.
+  // Undefined (both) = visible to every signed-in, role-assigned user.
+  // minRole: linear TECHNICIAN < SERVICE_MANAGER < CEO check — most
+  // pages fit this. roles: explicit allow-list for roles that don't fit
+  // a linear rank (SDR is a parallel track, not "above"/"below" a
+  // technician — see lib/auth/roleRank.ts's requireAnyRole). If both are
+  // set, roles wins. Real access control lives in each page's own
+  // requireRole()/requireAnyRole() call; this only decides whether the
+  // nav even shows a link, so nobody sees a link that just redirects
+  // them away.
   minRole?: RankedRole;
+  roles?: AppRole[];
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -45,9 +52,10 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/runbooks", label: "Runbooks", icon: BookOpen, status: "active", group: "Runbooks", minRole: "SERVICE_MANAGER" },
   { href: "/sops", label: "SOPs", icon: FileText, status: "active", group: "Runbooks" },
   { href: "/clients", label: "Client Profitability", icon: BarChart3, status: "active", group: "Growth", minRole: "CEO" },
+  { href: "/vendors", label: "Vendor Subscriptions", icon: Receipt, status: "active", group: "Growth", minRole: "CEO" },
   { href: "/tech-performance", label: "Tech Performance", icon: Gauge, status: "active", group: "Growth" },
   { href: "/devices", label: "Device Health", icon: MonitorCheck, status: "active", group: "Growth", minRole: "SERVICE_MANAGER" },
-  { href: "/crm", label: "CRM", icon: Users, status: "soon", group: "Growth" },
+  { href: "/crm", label: "CRM", icon: Users, status: "active", group: "Growth", roles: ["SDR", "CEO"] },
   { href: "/marketing", label: "Marketing Automation", icon: Megaphone, status: "soon", group: "Growth" },
   { href: "/dashboards", label: "Department Dashboards", icon: LayoutDashboard, status: "soon", group: "Growth" },
   { href: "/mindset", label: "Mindset & Fitness", icon: HeartPulse, status: "soon", group: "Personal" },

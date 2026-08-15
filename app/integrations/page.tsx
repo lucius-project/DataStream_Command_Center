@@ -11,6 +11,8 @@ import {
   getQuickBooksConnectionInfo,
   getAnthropicCredentialStatus,
   getSherwebCredentialStatus,
+  getKeapCredentialStatus,
+  getKeapConnectionInfo,
 } from "@/lib/services/integrations";
 import { MicrosoftConnectionCard } from "@/components/integrations/MicrosoftConnectionCard";
 import { HaloPsaConnectionCard } from "@/components/integrations/HaloPsaConnectionCard";
@@ -18,7 +20,7 @@ import { UnitedCloudConnectionCard } from "@/components/integrations/UnitedCloud
 import { NinjaRmmConnectionCard } from "@/components/integrations/NinjaRmmConnectionCard";
 import { QuickBooksConnectionCard } from "@/components/integrations/QuickBooksConnectionCard";
 import { AnthropicConnectionCard } from "@/components/integrations/AnthropicConnectionCard";
-import { KeapIntegrationCard } from "@/components/integrations/KeapIntegrationCard";
+import { KeapConnectionCard } from "@/components/integrations/KeapConnectionCard";
 import { SherwebConnectionCard } from "@/components/integrations/SherwebConnectionCard";
 
 export default async function IntegrationsPage() {
@@ -34,6 +36,8 @@ export default async function IntegrationsPage() {
     quickBooksInfo,
     anthropicStatus,
     sherwebStatus,
+    keapStatus,
+    keapInfo,
   ] = await Promise.all([
     getMicrosoftConnectionInfo(),
     getMicrosoftCredentialStatus(),
@@ -45,6 +49,8 @@ export default async function IntegrationsPage() {
     getQuickBooksConnectionInfo(),
     getAnthropicCredentialStatus(),
     getSherwebCredentialStatus(),
+    getKeapCredentialStatus(),
+    getKeapConnectionInfo(),
   ]);
   const redirectUri =
     process.env.MICROSOFT_REDIRECT_URI || "http://localhost:3001/api/auth/microsoft/callback";
@@ -52,6 +58,7 @@ export default async function IntegrationsPage() {
     process.env.NINJARMM_REDIRECT_URI || "http://localhost:3001/api/auth/ninjarmm/callback";
   const quickBooksRedirectUri =
     process.env.QUICKBOOKS_REDIRECT_URI || "http://localhost:3001/api/auth/quickbooks/callback";
+  const keapRedirectUri = process.env.KEAP_REDIRECT_URI || "http://localhost:3001/api/auth/keap/callback";
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-6">
@@ -92,7 +99,7 @@ export default async function IntegrationsPage() {
         </IntegrationCategory>
 
         <IntegrationCategory title="CRM & Marketing">
-          <KeapIntegrationCard />
+          <KeapConnectionCard info={keapInfo} redirectUri={keapRedirectUri} credentialStatus={keapStatus} />
         </IntegrationCategory>
       </div>
     </div>

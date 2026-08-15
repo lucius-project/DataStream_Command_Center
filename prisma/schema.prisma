@@ -123,6 +123,26 @@ model QuickBooksOAuthToken {
   updatedAt             DateTime @updatedAt
 }
 
+// Keap (CRM/Sales, Phase C) API Application credentials — OAuth2
+// authorization-code + refresh-token grant, confidential client (has a
+// secret), same two-table split as QuickBooks above: this row is the
+// app registration, KeapOAuthToken below is the per-login connection.
+model KeapCredential {
+  id                    String   @id @default("keap")
+  clientId              String
+  encryptedClientSecret String
+  updatedAt             DateTime @updatedAt
+}
+
+model KeapOAuthToken {
+  id                    String   @id @default("keap")
+  encryptedAccessToken  String
+  encryptedRefreshToken String
+  accessTokenExpiresAt  DateTime
+  connectedAt           DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
 // HaloPSA API Application credentials (OAuth2 client-credentials grant — no
 // user login step, so saving valid credentials here is what "connects" it).
 // Same singleton + encrypted-secret pattern as MicrosoftAppCredential.
@@ -946,4 +966,29 @@ model SopFile {
   createdAt  DateTime @default(now())
 
   @@index([sopEntryId])
+}
+
+// ---------------------------------------------------------------------------
+// Vendor Subscriptions
+// ---------------------------------------------------------------------------
+
+// Manually-tracked vendor license/subscription renewal dates — for
+// vendors with no API exposing this data (confirmed earlier: Huntress,
+// DNSFilter, Bitdefender, AutoElevate, Cove Data Protection all keep
+// renewal info in email, not any queryable endpoint). productName is
+// deliberately free text rather than a separate structured quantity +
+// unit — real examples ("500 endpoints", "50 identities") use different
+// units per product, so a rigid field wouldn't fit cleanly; the human-
+// readable string already carries what matters. CEO-only, same as
+// Client Profitability — see app/vendors/page.tsx.
+model VendorSubscription {
+  id          String   @id @default(cuid())
+  vendorName  String
+  productName String
+  renewalDate DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([renewalDate])
 }

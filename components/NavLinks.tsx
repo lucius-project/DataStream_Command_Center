@@ -12,7 +12,13 @@ import type { AppRole } from "@/app/generated/prisma/client";
 // that would only redirect them away.
 export function NavLinks({ role, onNavigate }: { role: AppRole; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const visibleItems = NAV_ITEMS.filter((item) => !item.minRole || isAtLeast(role as RankedRole | "SDR", item.minRole));
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    // roles (explicit allow-list) wins if set — for items like /crm
+    // that don't fit the linear rank at all (SDR isn't "above" or
+    // "below" a technician).
+    if (item.roles) return item.roles.includes(role);
+    return !item.minRole || isAtLeast(role as RankedRole | "SDR", item.minRole);
+  });
 
   return (
     <nav className="flex flex-col gap-5">
