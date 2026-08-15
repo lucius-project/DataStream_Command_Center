@@ -1,7 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
-  Inbox,
   Radar,
   ListChecks,
   Timer,
@@ -28,7 +27,7 @@ export type NavItem = {
   label: string;
   icon: LucideIcon;
   status: "active" | "soon";
-  group: "Daily" | "Runbooks" | "Growth" | "Personal" | "System";
+  group: "Growth" | "Accounts" | "Operations" | "Finance" | "Personal" | "System";
   // Undefined (both) = visible to every signed-in, role-assigned user.
   // minRole: linear TECHNICIAN < SERVICE_MANAGER < CEO check — most
   // pages fit this. roles: explicit allow-list for roles that don't fit
@@ -43,24 +42,34 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/business-health", label: "Business Health", icon: Activity, status: "active", group: "Daily", minRole: "SERVICE_MANAGER" },
-  { href: "/inbox", label: "Inbox Command", icon: Inbox, status: "active", group: "Daily", minRole: "SERVICE_MANAGER" },
-  { href: "/operations", label: "Operations", icon: Radar, status: "active", group: "Daily", minRole: "SERVICE_MANAGER" },
-  { href: "/calls", label: "Call Activity", icon: PhoneCall, status: "active", group: "Daily", minRole: "SERVICE_MANAGER" },
-  { href: "/command-flow", label: "Command Flow", icon: ListChecks, status: "active", group: "Daily", minRole: "SERVICE_MANAGER" },
-  { href: "/focus", label: "Focus Mode", icon: Timer, status: "active", group: "Daily" },
-  { href: "/runbooks", label: "Runbooks", icon: BookOpen, status: "active", group: "Runbooks", minRole: "SERVICE_MANAGER" },
-  { href: "/sops", label: "SOPs", icon: FileText, status: "active", group: "Runbooks" },
-  { href: "/clients", label: "Client Profitability", icon: BarChart3, status: "active", group: "Growth", minRole: "CEO" },
-  { href: "/vendors", label: "Vendor Subscriptions", icon: Receipt, status: "active", group: "Growth", minRole: "CEO" },
-  { href: "/tech-performance", label: "Tech Performance", icon: Gauge, status: "active", group: "Growth" },
-  { href: "/devices", label: "Device Health", icon: MonitorCheck, status: "active", group: "Growth", minRole: "SERVICE_MANAGER" },
+  // Growth — pipeline, sales, and performance-facing work.
   { href: "/crm", label: "CRM", icon: Users, status: "active", group: "Growth", roles: ["SDR", "CEO"] },
   { href: "/marketing", label: "Marketing Automation", icon: Megaphone, status: "soon", group: "Growth" },
   { href: "/dashboards", label: "Department Dashboards", icon: LayoutDashboard, status: "soon", group: "Growth" },
+
+  // Accounts — client account management.
+  { href: "/clients", label: "Client Profitability", icon: BarChart3, status: "active", group: "Accounts", minRole: "CEO" },
+
+  // Operations — day-to-day service desk work.
+  { href: "/tech-performance", label: "Tech Performance", icon: Gauge, status: "active", group: "Operations" },
+  { href: "/business-health", label: "Business Health", icon: Activity, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
+  { href: "/operations", label: "Operations", icon: Radar, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
+  { href: "/calls", label: "Call Activity", icon: PhoneCall, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
+  { href: "/command-flow", label: "Command Flow", icon: ListChecks, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
+  { href: "/devices", label: "Device Health", icon: MonitorCheck, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
+  { href: "/runbooks", label: "Runbooks", icon: BookOpen, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
+  { href: "/sops", label: "SOPs", icon: FileText, status: "active", group: "Operations" },
+
+  // Finance — vendor/subscription cost tracking (more finance pages land here later).
+  { href: "/vendors", label: "Vendor Subscriptions", icon: Receipt, status: "active", group: "Finance", minRole: "CEO" },
+
+  // Personal — individual tools, not team/client-facing.
+  { href: "/focus", label: "Focus Mode", icon: Timer, status: "active", group: "Personal" },
   { href: "/mindset", label: "Mindset & Fitness", icon: HeartPulse, status: "soon", group: "Personal" },
+
+  // System — app configuration.
   { href: "/integrations", label: "Integrations", icon: Plug, status: "active", group: "System", minRole: "CEO" },
   { href: "/admin", label: "Admin Settings", icon: Settings, status: "active", group: "System", minRole: "CEO" },
 ];
 
-export const NAV_GROUPS: NavItem["group"][] = ["Daily", "Runbooks", "Growth", "Personal", "System"];
+export const NAV_GROUPS: NavItem["group"][] = ["Growth", "Accounts", "Operations", "Finance", "Personal", "System"];
