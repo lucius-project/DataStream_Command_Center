@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getGraphAccessToken } from "@/lib/auth/msal";
-import { archiveMessage, markMessageRead } from "@/lib/integrations/graph";
+import { archiveMessage, markMessageRead, isMessageNotFoundError } from "@/lib/integrations/graph";
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,8 +16,15 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     await markMessageRead(accessToken, item.graphMessageId);
     await archiveMessage(accessToken, item.graphMessageId);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to archive in Outlook.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Already gone from the mailbox (moved/deleted outside this app) —
+    // there's nothing left to mark read or archive, so that's not a
+    // real failure. Let it through to the local status update instead
+    // of leaving the item permanently stuck because Graph can't find
+    // something to act on.
+    if (!isMessageNotFoundError(err)) {
+      const message = err instanceof Error ? err.message : "Failed to archive in Outlook.";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 
   const updated = await prisma.inboxItem.update({

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getGraphAccessToken } from "@/lib/auth/msal";
-import { createDraftReply } from "@/lib/integrations/graph";
+import { createDraftReply, isMessageNotFoundError } from "@/lib/integrations/graph";
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,6 +23,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const accessToken = await getGraphAccessToken();
     await createDraftReply(accessToken, item.graphMessageId, body);
   } catch (err) {
+    if (isMessageNotFoundError(err)) {
+      return NextResponse.json(
+        {
+          error:
+            "This email is no longer in the mailbox, so a reply can't be drafted against it. You can still mark it Done, Delegate, or Waiting.",
+        },
+        { status: 404 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to create draft in Outlook.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

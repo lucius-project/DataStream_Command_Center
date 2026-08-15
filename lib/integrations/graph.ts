@@ -3,7 +3,17 @@
 // the project README for why. Every exported function here takes an
 // access token from lib/auth/msal.ts's getGraphAccessToken().
 
-import { Client } from "@microsoft/microsoft-graph-client";
+import { Client, GraphError } from "@microsoft/microsoft-graph-client";
+
+// A synced InboxItem's graphMessageId can go stale — the underlying
+// email gets moved, filed, or deleted from the real mailbox by Outlook
+// rules or the user themselves, independent of this app. Graph reports
+// that as a 404 with this specific code, not a generic failure, so
+// callers can tell "this message is just gone" apart from a real error
+// and respond accordingly (see the inbox action routes).
+export function isMessageNotFoundError(err: unknown): boolean {
+  return err instanceof GraphError && (err.code === "ErrorItemNotFound" || err.statusCode === 404);
+}
 
 export type GraphMessage = {
   id: string;

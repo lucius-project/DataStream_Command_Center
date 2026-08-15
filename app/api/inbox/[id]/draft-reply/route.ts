@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getGraphAccessToken } from "@/lib/auth/msal";
-import { getMessageBody } from "@/lib/integrations/graph";
+import { getMessageBody, isMessageNotFoundError } from "@/lib/integrations/graph";
 import { generateDraftReply } from "@/lib/services/inboxClassification";
 
 // Generates text only — nothing is saved to Outlook or to this item
@@ -28,6 +28,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
     return NextResponse.json({ draft });
   } catch (err) {
+    if (isMessageNotFoundError(err)) {
+      return NextResponse.json(
+        { error: "This email is no longer in the mailbox, so a draft can't be generated from it." },
+        { status: 404 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to generate a draft.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
