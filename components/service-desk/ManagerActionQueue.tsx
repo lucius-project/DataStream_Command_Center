@@ -44,15 +44,21 @@ function SortableHeader({
   sortKey,
   sort,
   onSort,
+  first,
 }: {
   label: string;
   sortKey: SortKey;
   sort: SortState;
   onSort: (key: SortKey) => void;
+  // Every other column gets its left breathing room from the previous
+  // column's pr-3 — the leading column (Severity) has nothing before it
+  // and needs its own pl-3, same convention FocusTable.tsx's first
+  // column already uses.
+  first?: boolean;
 }) {
   const active = sort?.key === sortKey;
   return (
-    <th className="py-1.5 pr-3 font-normal">
+    <th className={`py-1.5 pr-3 font-normal ${first ? "pl-3" : ""}`}>
       <button
         type="button"
         onClick={() => onSort(sortKey)}
@@ -101,7 +107,7 @@ export function ManagerActionQueue({ alerts }: { alerts: ManagerAlert[] }) {
           <table className="w-full min-w-[900px] text-left font-data text-xs">
             <thead>
               <tr className="border-b border-border text-text-faint">
-                <SortableHeader label="Severity" sortKey="severity" sort={sort} onSort={onSort} />
+                <SortableHeader label="Severity" sortKey="severity" sort={sort} onSort={onSort} first />
                 <th className="py-1.5 pr-3 font-normal">Issue</th>
                 <SortableHeader label="Client" sortKey="client" sort={sort} onSort={onSort} />
                 <th className="py-1.5 pr-3 font-normal">Ticket / Call</th>
@@ -114,7 +120,7 @@ export function ManagerActionQueue({ alerts }: { alerts: ManagerAlert[] }) {
             <tbody>
               {rows.map((a) => (
                 <tr key={a.id} className="border-t border-border text-text">
-                  <td className="py-1.5 pr-3">
+                  <td className="py-1.5 pr-3 pl-3">
                     <span className={`font-semibold ${SEVERITY_TEXT[a.severity]}`}>{SEVERITY_LABEL[a.severity]}</span>
                   </td>
                   <td className="max-w-[280px] py-1.5 pr-3 text-text">{a.issue}</td>
