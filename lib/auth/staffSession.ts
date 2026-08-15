@@ -66,6 +66,7 @@ export type Session = {
   name: string;
   role: AppRole | null;
   techPerson: string | null;
+  avatarPath: string | null;
 };
 
 // Re-reads the StaffUser row from the DB on every call — role/techPerson
@@ -82,5 +83,12 @@ export async function getSession(): Promise<Session | null> {
 
   const user = await prisma.staffUser.findUnique({ where: { id: userId } });
   if (!user) return null;
-  return { id: user.id, email: user.email, name: user.name, role: user.role, techPerson: user.techPerson };
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    techPerson: user.techPerson,
+    avatarPath: user.avatarPath,
+  };
 }

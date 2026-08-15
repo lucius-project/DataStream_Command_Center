@@ -20,9 +20,32 @@ datasource db {
 enum InboxStatus {
   NEW
   TRIAGED
+  WAITING
   DELEGATED
   SNOOZED
   DONE
+}
+
+// AI-assigned tags (see lib/services/inboxClassification.ts) — never
+// used to compute a KPI or invented fact, only to sort/label mail
+// already synced from Graph. Category is "what kind of ask is this,"
+// Urgency is "how soon does it need you" — orthogonal axes, an
+// APPROVAL can be either ATTENTION_TODAY or DECISION depending on
+// deadline pressure.
+enum InboxCategory {
+  CLIENT
+  APPROVAL
+  INTERNAL
+  SALES
+  OTHER
+}
+
+enum InboxUrgency {
+  ATTENTION_TODAY
+  DECISION
+  DELEGATABLE
+  INFORMATIONAL
+  NEWSLETTER
 }
 
 model InboxItem {
@@ -36,11 +59,28 @@ model InboxItem {
   receivedAt     DateTime
   status         InboxStatus @default(NEW)
   delegateNote   String?
+  delegatedToId  String?
+  delegatedTo    StaffUser?  @relation(fields: [delegatedToId], references: [id])
+  waitingSince   DateTime?
   snoozedUntil   DateTime?
   isNoise        Boolean     @default(false)
   clearedAt      DateTime?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+
+  // Set once at sync time by classifyNewInboxItems (inboxClassification.ts)
+  // and never re-run on an already-tracked item — same "a re-sync can't
+  // undo a decision" rule syncInboxFromGraph already follows for status.
+  // All null when Anthropic isn't connected or a classification batch
+  // failed; every reader must treat null as "unclassified," not crash.
+  category     InboxCategory?
+  urgency      InboxUrgency?
+  brief        String?
+  actionTitle  String?
+  dueDate      DateTime?
+  dollarAmount Float?
+  classifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([receivedAt])
@@ -924,9 +964,16 @@ model StaffUser {
   name        String
   role        AppRole?
   techPerson  String?
+  // Relative filename under data/avatars/ (see lib/services/avatars.ts) —
+  // not a URL column, since these are role-gated local files, same
+  // storage convention as SopFile.storagePath. Includes a random suffix
+  // per upload so replacing a picture naturally busts any cached <img>.
+  avatarPath  String?
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  delegatedInboxItems InboxItem[]
 }
 
 // SOP tracking (Phase B of the staff login/RBAC work) — structured

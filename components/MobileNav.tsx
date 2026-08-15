@@ -4,10 +4,12 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { NavLinks } from "./NavLinks";
 import { ThemeToggle } from "./ThemeToggle";
-import { SignOutButton } from "./SignOutButton";
+import { InboxShortcut } from "./InboxShortcut";
+import { AccountMenu } from "./account/AccountMenu";
+import type { Session } from "@/lib/auth/staffSession";
 import type { AppRole } from "@/app/generated/prisma/client";
 
-export function MobileNav({ role }: { role: AppRole }) {
+export function MobileNav({ role, session }: { role: AppRole; session: Session }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -26,8 +28,15 @@ export function MobileNav({ role }: { role: AppRole }) {
           DATASTREAM
         </span>
         <div className="ml-auto flex items-center gap-1">
+          <InboxShortcut role={role} />
           <ThemeToggle />
-          <SignOutButton />
+          <AccountMenu
+            userId={session.id}
+            name={session.name}
+            email={session.email}
+            hasAvatar={Boolean(session.avatarPath)}
+            onNavigate={() => setOpen(false)}
+          />
         </div>
       </div>
 

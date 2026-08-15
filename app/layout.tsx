@@ -4,6 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
 import { MobileNav } from "@/components/MobileNav";
+import { TopBar } from "@/components/TopBar";
 import { getSession } from "@/lib/auth/staffSession";
 
 const geistSans = Geist({
@@ -57,11 +58,12 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <Script id="theme-init" strategy="beforeInteractive">
           {themeInitScript}
         </Script>
-        {role ? (
+        {session && role ? (
           <>
             <Sidebar role={role} />
             <div className="flex min-w-0 flex-1 flex-col">
-              <MobileNav role={role} />
+              <TopBar role={role} session={session} />
+              <MobileNav role={role} session={session} />
               <main className="min-w-0 flex-1">{children}</main>
             </div>
           </>
