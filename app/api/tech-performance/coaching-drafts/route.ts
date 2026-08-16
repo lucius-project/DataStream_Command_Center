@@ -31,9 +31,38 @@ const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { year: "numeric", month:
 // deserves an email. Manual trigger only, by design: this app has no
 // scheduled-job infrastructure, and the user explicitly chose a button
 // over building one just for this.
-export async function POST() {
+//
+// An optional JSON body `{ technician }` scopes the run to a single tech
+// (the per-card button on /tech-performance) instead of every known tech
+// (the huddle page's "Generate Coaching Drafts" button, which sends no
+// body). Everything upstream of the final send loop is still computed
+// for the whole team either way — the per-tech items map already needs
+// every tech's data to attribute alerts/SLA rows correctly, so scoping
+// earlier would risk a single-tech run silently seeing different alert
+// context than the same tech gets in a full run.
+export async function POST(request: Request) {
+  let technician: Tech | undefined;
   try {
-    const directory = await getContactDirectory().catch(() => null);
+    const body = await request.json();
+    if (body && typeof body.technician === "string" && (KNOWN_TECHS as readonly string[]).includes(body.technician)) {
+      technician = body.technician as Tech;
+    }
+  } catch {
+    // No body (or invalid JSON) — the "generate for all techs" button
+    // sends no body at all, which is the normal case here.
+  }
+
+  try {
+    // Best-effort, not blocking — a directory failure shouldn't stop
+    // today's drafts from being generated (see this route's own header
+    // comment on why a clean day still deserves an email), but the real
+    // error is worth surfacing rather than silently discarding, same
+    // reasoning as app/calls/page.tsx's directory handling.
+    let directoryError: string | undefined;
+    const directory = await getContactDirectory().catch((err) => {
+      directoryError = err instanceof Error ? err.message : "Directory lookup failed.";
+      return null;
+    });
 
     const [healthSnapshot, healthWeekAgo, slaAtRisk, staleTickets, kpiSettings, techRoleConfigs, haloCredential] = await Promise.all([
       getServiceDeskHealthSnapshot(),
@@ -126,7 +155,8 @@ export async function POST() {
     const created: string[] = [];
     const skipped: { technician: string; reason: string }[] = [];
 
-    for (const person of KNOWN_TECHS) {
+    const targets = technician ? [technician] : KNOWN_TECHS;
+    for (const person of targets) {
       const email = techEmails.get(person);
       if (!email) {
         skipped.push({ technician: person, reason: "No HaloPSA agent email found for this name." });
@@ -147,7 +177,7 @@ export async function POST() {
       }
     }
 
-    return NextResponse.json({ created, skipped });
+    return NextResponse.json({ created, skipped, directoryError });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to generate coaching drafts.";
     return NextResponse.json({ error: message }, { status: 500 });

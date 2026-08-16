@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { Mail } from "lucide-react";
 
-type Result = { created: string[]; skipped: { technician: string; reason: string }[] } | { error: string };
+type Result =
+  | { created: string[]; skipped: { technician: string; reason: string }[]; directoryError?: string }
+  | { error: string };
 
 // Client leaf inside TechFocusSection's Server Component header (same
 // pattern as InfoButton/MorningBriefHealthTile) — the only interactive
@@ -53,6 +55,11 @@ export function GenerateCoachingDraftsButton() {
             ? `${result.created.length} draft${result.created.length === 1 ? "" : "s"} created in lcraig@dsnets.com's Drafts folder (${result.created.join(", ")}).`
             : "No drafts created."}
           {result.skipped.length > 0 && ` Skipped: ${result.skipped.map((s) => `${s.technician} (${s.reason})`).join("; ")}`}
+        </span>
+      )}
+      {result && "created" in result && result.directoryError && (
+        <span className="text-xs text-status-warn">
+          Directory lookup failed, some names/companies may be missing: {result.directoryError}
         </span>
       )}
     </div>

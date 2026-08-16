@@ -18,6 +18,7 @@ import { Stat, GroupLabel, StatusPill, DailyHoursBars } from "./shared";
 import { DrilldownStat } from "./DrilldownStat";
 import { TechScoreBadge } from "./TechScoreBadge";
 import { ActivityTimelineModal } from "./ActivityTimelineModal";
+import { GenerateTechEmailButton } from "./GenerateTechEmailButton";
 import { LockedStrip } from "@/components/business-health/LockedStrip";
 
 // Confirmed genuinely unavailable per-technician, not just unbuilt — see
@@ -36,6 +37,12 @@ const PHONE_LOCKED = [
   { label: "Missed Calls", blockedBy: "The phone system rings the whole team at once — an unanswered call can't be attributed to one technician." },
   { label: "Answer %", blockedBy: "Same hunt-group limitation — see Missed Calls. Team-wide answer rate is on the KPI strip above." },
 ];
+// All three locked lists collapsed behind one disclosure at the bottom
+// of the card (see the <details> below) instead of scattered inline —
+// six always-gray "not tracked" chips were most of what made the card
+// hard to scan at a glance; the info is still one click away, grouped by
+// the same section it used to sit inside.
+const UNAVAILABLE_METRIC_COUNT = QUALITY_LOCKED.length + SERVICE_LOCKED.length + PHONE_LOCKED.length;
 function minutesLabel(seconds: number): string {
   return `${Math.round((seconds / 60) * 10) / 10}m`;
 }
@@ -86,13 +93,15 @@ function paceLabel(pctOfExpectedToDate: number): string {
   return "TIME ENTRY BELOW TARGET";
 }
 
-function slaDisplay(m: TechSlaMetric): string {
+// Exported — TechComparisonTable.tsx reuses these for the same SLA%
+// cells, one formatting/threshold rule rather than a second copy.
+export function slaDisplay(m: TechSlaMetric): string {
   if (m.status === "available") return `${m.pct}%`;
   if (m.status === "insufficient_sample") return `${m.eligible} sample`;
   return "—";
 }
 
-function slaTone(m: TechSlaMetric): "warn" | "critical" | undefined {
+export function slaTone(m: TechSlaMetric): "warn" | "critical" | undefined {
   if (m.status !== "available" || m.pct === null) return undefined;
   if (m.pct >= 90) return undefined;
   if (m.pct >= 75) return "warn";
@@ -155,12 +164,16 @@ export function TechPerformanceRow({
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <span className="font-display text-base font-medium text-text">{tech.person}</span>
-          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">{TECH_ROLE_LABELS[role]}</span>
+          {/* A real heading, not a styled span — with a dozen+ tech cards
+              on this page, screen-reader heading-navigation (the H key)
+              is the only practical way to jump between them. */}
+          <h3 className="font-display text-base font-medium text-text">{tech.person}</h3>
+          <span className="font-data text-[10px] tracking-wide text-text-muted uppercase">{TECH_ROLE_LABELS[role]}</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Sparkline trend={tech.trend} />
           <ActivityTimelineModal techLabel={tech.person} entries={timelineEntries} />
+          <GenerateTechEmailButton person={tech.person} />
           <TechScoreBadge person={tech.person} result={scoreResult} trend={scoreTrend} />
           <StatusPill status={tech.status} />
         </div>
@@ -281,9 +294,6 @@ export function TechPerformanceRow({
                 emptyMessage="No calls matched to a ticket this week — matching is inferred from tech, client, and timing only; HaloPSA doesn't expose which contact called on a given ticket."
               />
             </span>
-            <div className="mt-1">
-              <LockedStrip locked={PHONE_LOCKED} />
-            </div>
           </div>
         </div>
       </div>
@@ -312,15 +322,10 @@ export function TechPerformanceRow({
               value={serviceMetrics.medianFirstResponseHours !== null ? `${Math.round(serviceMetrics.medianFirstResponseHours * 10) / 10}h` : "—"}
               label="median first response"
             />
-            <LockedStrip locked={SERVICE_LOCKED} />
           </div>
         </div>
         <div>
-          <GroupLabel>Quality</GroupLabel>
-          <div className="mt-1">
-            <LockedStrip locked={QUALITY_LOCKED} />
-          </div>
-          <div className="mt-3">
+          <div>
             <GroupLabel>Remote Support</GroupLabel>
             <div className="mt-1 flex flex-col gap-0.5 font-data text-[11px]">
               {remote.sessions === 0 && remote.failedSessions === 0 ? (
@@ -374,6 +379,32 @@ export function TechPerformanceRow({
           </div>
         </div>
       </div>
+
+      <details className="mt-3 border-t border-border pt-2 [&_summary::-webkit-details-marker]:hidden">
+        <summary className="cursor-pointer list-none font-data text-[10px] tracking-wide text-text-faint uppercase hover:text-text-muted">
+          Unavailable metrics ({UNAVAILABLE_METRIC_COUNT})
+        </summary>
+        <div className="mt-2 flex flex-col gap-2">
+          <div>
+            <GroupLabel>Quality</GroupLabel>
+            <div className="mt-1">
+              <LockedStrip locked={QUALITY_LOCKED} />
+            </div>
+          </div>
+          <div>
+            <GroupLabel>Service</GroupLabel>
+            <div className="mt-1">
+              <LockedStrip locked={SERVICE_LOCKED} />
+            </div>
+          </div>
+          <div>
+            <GroupLabel>Phone</GroupLabel>
+            <div className="mt-1">
+              <LockedStrip locked={PHONE_LOCKED} />
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }
