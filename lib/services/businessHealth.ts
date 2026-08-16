@@ -186,7 +186,7 @@ async function kpiTicketBacklog(): Promise<Kpi> {
     status,
     detail: `${p1Count} P1 · ${agingCount} aging >24h · ${techCount} techs assigned`,
     benchmark: "capacity-based default, not an industry figure",
-    href: "/operations",
+    href: "/tech-performance",
   };
 }
 
@@ -201,7 +201,7 @@ async function kpiSlaCompliance(): Promise<Kpi> {
       status: "green",
       detail: "No open tickets right now.",
       benchmark: "default target 98%, not a universal industry figure",
-      href: "/operations",
+      href: "/tech-performance",
     };
   }
 
@@ -222,7 +222,7 @@ async function kpiSlaCompliance(): Promise<Kpi> {
     status,
     detail: `${breached} of ${tickets.length} open tickets flagged >24h past response SLA`,
     benchmark: "default target 98%, not a universal industry figure — measures this app's own SLA_BREACH flag, not a contractual SLA",
-    href: "/operations",
+    href: "/tech-performance",
   };
 }
 

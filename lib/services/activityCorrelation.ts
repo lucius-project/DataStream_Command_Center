@@ -152,7 +152,7 @@ export function buildCallMatchRows(matches: CallTicketMatch[]): TechCardRow[] {
       primary: m.ticket.haloTicketId,
       secondary: m.ticket.clientName ?? undefined,
       tertiary: `${m.tier}${m.ambiguous ? " · ambiguous" : ""} · call ${m.call.startAt.toLocaleString()} — inferred from tech/client/timing, not confirmed`,
-      href: "/operations",
+      href: "/tech-performance",
     }));
 }
 
@@ -272,7 +272,7 @@ export function buildSessionMatchRows(matches: SessionTicketMatch[]): TechCardRo
       primary: m.ticket.haloTicketId,
       secondary: m.ticket.clientName ?? undefined,
       tertiary: `${m.tier}${m.ambiguous ? " · ambiguous" : ""} · session ${m.session.startedAt?.toLocaleString() ?? ""} — inferred from tech/client/timing, not confirmed`,
-      href: "/operations",
+      href: "/tech-performance",
     }));
 }
 

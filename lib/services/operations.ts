@@ -56,22 +56,6 @@ export async function getLoadPerTech(): Promise<TechLoad[]> {
   return Array.from(byTech.values()).sort((a, b) => b.openCount - a.openCount);
 }
 
-export async function getAttentionFlags() {
-  const now = new Date();
-  const flags = await prisma.attentionFlag.findMany({
-    where: {
-      status: { not: "RESOLVED" },
-      OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
-    },
-    include: { ticket: true },
-    orderBy: { createdAt: "desc" },
-  });
-  return flags.sort((a, b) => {
-    if (a.status === b.status) return 0;
-    return a.status === "OPEN" ? -1 : 1;
-  });
-}
-
 const SLA_BREACH_GRACE_HOURS = 24;
 
 // One flag per (ticket, type) for the ticket's entire time in the open

@@ -1,6 +1,6 @@
 import { Radar, Inbox, BookOpen, PartyPopper } from "lucide-react";
 import { TriageCard } from "@/components/inbox/TriageCard";
-import { AttentionCard } from "@/components/operations/AttentionPane";
+import { AttentionCard } from "./AttentionCard";
 import { RunbookItemCard } from "@/components/runbooks/RunbookItemCard";
 import type { CommandFlowEntry } from "@/lib/services/commandFlow";
 

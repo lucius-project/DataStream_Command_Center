@@ -107,7 +107,7 @@ export function slaFocusItems(slaAtRisk: SlaAtRiskTicket[], knownTechs: readonly
       tier,
       badge: SLA_TYPE_LABEL[t.slaType],
       text: overdue ? `Breached ${duration} ago` : `Due in ${duration}`,
-      href: "/operations",
+      href: "/tech-performance",
       priority: t.priority,
       ticketTitle: t.summary,
       ticketUrl: instanceUrl ? haloTicketUrl(instanceUrl, t.haloTicketId) : null,

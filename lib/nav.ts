@@ -1,14 +1,11 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
-  Radar,
   ListChecks,
-  Timer,
   BookOpen,
   Users,
   Megaphone,
   LayoutDashboard,
-  HeartPulse,
   Plug,
   BarChart3,
   Gauge,
@@ -27,7 +24,7 @@ export type NavItem = {
   label: string;
   icon: LucideIcon;
   status: "active" | "soon";
-  group: "Growth" | "Accounts" | "Operations" | "Finance" | "Personal" | "System";
+  group: "Growth" | "Accounts" | "Operations" | "Finance" | "System";
   // Undefined (both) = visible to every signed-in, role-assigned user.
   // minRole: linear TECHNICIAN < SERVICE_MANAGER < CEO check — most
   // pages fit this. roles: explicit allow-list for roles that don't fit
@@ -53,7 +50,6 @@ export const NAV_ITEMS: NavItem[] = [
   // Operations — day-to-day service desk work.
   { href: "/tech-performance", label: "Tech Performance", icon: Gauge, status: "active", group: "Operations" },
   { href: "/business-health", label: "Business Health", icon: Activity, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
-  { href: "/operations", label: "Operations", icon: Radar, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
   { href: "/calls", label: "Call Activity", icon: PhoneCall, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
   { href: "/command-flow", label: "Command Flow", icon: ListChecks, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
   { href: "/devices", label: "Device Health", icon: MonitorCheck, status: "active", group: "Operations", minRole: "SERVICE_MANAGER" },
@@ -63,13 +59,13 @@ export const NAV_ITEMS: NavItem[] = [
   // Finance — vendor/subscription cost tracking (more finance pages land here later).
   { href: "/vendors", label: "Vendor Subscriptions", icon: Receipt, status: "active", group: "Finance", minRole: "CEO" },
 
-  // Personal — individual tools, not team/client-facing.
-  { href: "/focus", label: "Focus Mode", icon: Timer, status: "active", group: "Personal" },
-  { href: "/mindset", label: "Mindset & Fitness", icon: HeartPulse, status: "soon", group: "Personal" },
-
   // System — app configuration.
   { href: "/integrations", label: "Integrations", icon: Plug, status: "active", group: "System", minRole: "CEO" },
   { href: "/admin", label: "Admin Settings", icon: Settings, status: "active", group: "System", minRole: "CEO" },
 ];
 
-export const NAV_GROUPS: NavItem["group"][] = ["Growth", "Accounts", "Operations", "Finance", "Personal", "System"];
+// Personal group removed — Focus Mode moved to a top-bar shortcut
+// (components/FocusShortcut.tsx) next to Inbox Command, and Mindset &
+// Fitness (a "soon" stub with no real page behind it) was dropped
+// entirely, so the group had nothing left in it.
+export const NAV_GROUPS: NavItem["group"][] = ["Growth", "Accounts", "Operations", "Finance", "System"];

@@ -601,21 +601,21 @@ export function buildTechCardTicketData(
     primary: t.haloTicketId,
     secondary: t.clientName ?? undefined,
     tertiary: `${t.priority} · ${t.status} · opened ${Math.round((now - t.openedAt.getTime()) / 3600000)}h ago`,
-    href: "/operations",
+    href: "/tech-performance",
   });
   const staleRow = (t: StaleTicket): TechCardRow => ({
     id: t.id,
     primary: t.haloTicketId,
     secondary: t.clientName ?? undefined,
     tertiary: `${t.priority} · ${Math.round(t.businessHoursSinceAction)} business hours since last action`,
-    href: "/operations",
+    href: "/tech-performance",
   });
   const missRow = (m: SlaMiss, kind: string): TechCardRow => ({
     id: `${m.haloTicketId}-${kind}`,
     primary: m.haloTicketId,
     secondary: m.clientName ?? undefined,
     tertiary: `${m.priority} · ${kind} target missed ${Math.round((now - m.dueAt.getTime()) / 60000)}m ago`,
-    href: "/operations",
+    href: "/tech-performance",
   });
   const closedRow = (c: ClosedTicket): TechCardRow => ({
     id: c.haloTicketId,

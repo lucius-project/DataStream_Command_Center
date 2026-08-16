@@ -15,23 +15,15 @@ const TYPE_LABEL: Record<string, string> = {
   OTHER: "Flagged",
 };
 
-export function AttentionPane({ flags }: { flags: FlagWithTicket[] }) {
-  return (
-    <div className="flex flex-col gap-2">
-      {flags.map((flag) => (
-        <AttentionCard key={flag.id} flag={flag} />
-      ))}
-      {flags.length === 0 && (
-        <div className="rounded-lg border border-border bg-panel p-6 text-center text-sm text-text-muted">
-          Nothing needs you right now.
-        </div>
-      )}
-    </div>
-  );
-}
-
 type Mode = "idle" | "delegate" | "snooze";
 
+// Moved from the now-removed /operations page (components/operations/
+// AttentionPane.tsx) — this is Command Flow's only remaining consumer of
+// the OPERATIONS-sourced attention-flag card (see CommandFlowView.tsx's
+// source === "OPERATIONS" branch). The delegate/resolve/snooze API
+// routes it calls (app/api/operations/attention/[id]/*) stayed at their
+// original path — that URL prefix predates the page and isn't tied to
+// it, so there was nothing to move there.
 export function AttentionCard({ flag }: { flag: FlagWithTicket }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("idle");

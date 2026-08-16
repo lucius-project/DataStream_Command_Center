@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { NavLinks } from "./NavLinks";
 import { ThemeToggle } from "./ThemeToggle";
+import { FocusShortcut } from "./FocusShortcut";
 import { InboxShortcut } from "./InboxShortcut";
 import { AccountMenu } from "./account/AccountMenu";
 import type { Session } from "@/lib/auth/staffSession";
@@ -28,6 +29,7 @@ export function MobileNav({ role, session }: { role: AppRole; session: Session }
           DATASTREAM
         </span>
         <div className="ml-auto flex items-center gap-1">
+          <FocusShortcut />
           <InboxShortcut role={role} />
           <ThemeToggle />
           <AccountMenu

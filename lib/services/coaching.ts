@@ -77,14 +77,14 @@ function slaInsight(
         tone: "positive",
         subject: "Service Desk",
         statement: `${label} improved from ${prior}% to ${Math.round(current)}% over the past week.`,
-        href: "/operations",
+        href: "/tech-performance",
       }
     : {
         id,
         tone: "improvement",
         subject: "Service Desk",
         statement: `${label} declined from ${prior}% to ${Math.round(current)}% over the past week.`,
-        href: "/operations",
+        href: "/tech-performance",
       };
 }
 
@@ -101,14 +101,14 @@ function agingInsight(current: number, prior: number | null | undefined): Coachi
         tone: "positive",
         subject: "Service Desk",
         statement: `Tech-actionable aging tickets dropped from ${prior} to ${current} over the past week.`,
-        href: "/operations",
+        href: "/tech-performance",
       }
     : {
         id: "org-aging",
         tone: "improvement",
         subject: "Service Desk",
         statement: `Tech-actionable aging tickets rose from ${prior} to ${current} over the past week — worth a look.`,
-        href: "/operations",
+        href: "/tech-performance",
       };
 }
 

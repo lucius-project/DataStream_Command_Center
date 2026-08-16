@@ -624,7 +624,7 @@ function kpiTicketHealth(techs: TechPerformance[], org: TechOrgSummary, lastWeek
     status,
     detail: `${org.openCount} open across the team · ${org.onHoldCount} on hold/blocked`,
     benchmark: "0 P1s and 0 tickets aging past 24h is healthy",
-    href: "/operations",
+    href: "/tech-performance",
     trend,
   };
 }
