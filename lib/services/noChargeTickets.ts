@@ -26,7 +26,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/crypto";
-import { getHaloAccessToken } from "@/lib/integrations/halopsa";
+import { withHaloAuthRetry, PROJECT_TICKET_TYPE_IDS } from "@/lib/integrations/halopsa";
 import { fetchHaloActionsForTicket, mapHaloDate, withComputeThrottle, HOURS_THROTTLE_MS } from "@/lib/integrations/haloShared";
 import { startOfToday } from "@/lib/dateUtils";
 import type { TicketPriority } from "@/app/generated/prisma/client";
@@ -52,33 +52,40 @@ async function computeNoChargeTickets(): Promise<NoChargeTicket[]> {
   // entirely for these (cheaper, and correctness-neutral: a P4 ticket
   // can never fail this check).
   const candidates = await prisma.ticketSnapshot.findMany({
-    where: { lastActionAt: { gte: yesterday }, priority: { not: "P4" } },
+    where: {
+      lastActionAt: { gte: yesterday },
+      priority: { not: "P4" },
+      // Project/Project Task tickets aren't service-desk work this alert
+      // is tuned for — see PROJECT_TICKET_TYPE_IDS's own comment.
+      ticketTypeId: { notIn: [...PROJECT_TICKET_TYPE_IDS] },
+    },
   });
   if (candidates.length === 0) return [];
 
   const clientSecret = decryptToken(credential.encryptedClientSecret);
-  const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
 
-  const results: NoChargeTicket[] = [];
-  for (const ticket of candidates) {
-    const actions = await fetchHaloActionsForTicket(credential.instanceUrl, accessToken, ticket.haloTicketId);
-    const hasNoCharge = actions.some((a) => {
-      if (a.actisbillable !== false) return false;
-      const dt = mapHaloDate(a, ["datetime"]);
-      return dt !== null && dt >= yesterday && dt < todayStart;
-    });
-    if (hasNoCharge) {
-      results.push({
-        id: ticket.id,
-        haloTicketId: ticket.haloTicketId,
-        summary: ticket.summary,
-        clientName: ticket.clientName,
-        assignedTech: ticket.assignedTech,
-        priority: ticket.priority,
+  return withHaloAuthRetry(credential.instanceUrl, credential.clientId, clientSecret, async (accessToken) => {
+    const results: NoChargeTicket[] = [];
+    for (const ticket of candidates) {
+      const actions = await fetchHaloActionsForTicket(credential.instanceUrl, accessToken, ticket.haloTicketId);
+      const hasNoCharge = actions.some((a) => {
+        if (a.actisbillable !== false) return false;
+        const dt = mapHaloDate(a, ["datetime"]);
+        return dt !== null && dt >= yesterday && dt < todayStart;
       });
+      if (hasNoCharge) {
+        results.push({
+          id: ticket.id,
+          haloTicketId: ticket.haloTicketId,
+          summary: ticket.summary,
+          clientName: ticket.clientName,
+          assignedTech: ticket.assignedTech,
+          priority: ticket.priority,
+        });
+      }
     }
-  }
-  return results;
+    return results;
+  });
 }
 
 export async function getNoChargeTicketsYesterday(): Promise<NoChargeTicket[]> {

@@ -36,6 +36,16 @@ import type { TicketPriority } from "@/app/generated/prisma/client";
 export type Tech = "Miguel" | "Cameron" | "Darryll" | "Emily";
 export const KNOWN_TECHS: Tech[] = ["Miguel", "Cameron", "Darryll", "Emily"];
 
+// HaloPSA ticket type IDs for "Project" and "Project Task" (confirmed
+// live via GET /api/TicketType — both are the only two entries with
+// use: "projects", distinct from ordinary service-desk tickets). Used
+// by managerAlerts.ts/noChargeTickets.ts to exclude project-tracking
+// tickets from Needs Attention/Manager Alerts — those are tracked in
+// their own project workflow, not the service desk queue this app's
+// alert rules are tuned for. Instance-specific numeric IDs, not
+// something to re-derive from a name string at read time.
+export const PROJECT_TICKET_TYPE_IDS: ReadonlySet<number> = new Set([5, 20]);
+
 function hoursAgo(hours: number): Date {
   return new Date(Date.now() - hours * 60 * 60 * 1000);
 }
@@ -106,11 +116,31 @@ async function syncMockTickets(): Promise<{ synced: number }> {
 // Live HaloPSA API
 // ---------------------------------------------------------------------------
 
+// In-memory only (not DB-persisted like NinjaOne's refresh token) — this
+// is a client_credentials machine token with no refresh token to
+// protect, cheap to re-fetch on a cold start, so DB persistence would be
+// unneeded complexity. Without this cache, every /tech-performance load
+// did two live token exchanges (syncTicketsFromHalo + syncTeamTimeGaps
+// each call this independently), which also eats into HaloPSA's
+// 700-req/5-min rate limit for no benefit (see haloShared.ts's own
+// comment on that limit).
+let cachedToken: { token: string; expiresAt: number; instanceUrl: string; clientId: string } | null = null;
+
 export async function getHaloAccessToken(
   instanceUrl: string,
   clientId: string,
   clientSecret: string,
 ): Promise<string> {
+  const now = Date.now();
+  if (
+    cachedToken &&
+    cachedToken.instanceUrl === instanceUrl &&
+    cachedToken.clientId === clientId &&
+    cachedToken.expiresAt > now
+  ) {
+    return cachedToken.token;
+  }
+
   const res = await fetch(`${normalizeInstanceUrl(instanceUrl)}/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -125,11 +155,50 @@ export async function getHaloAccessToken(
     const body = await res.text().catch(() => "");
     throw new Error(`HaloPSA token request failed (${res.status}): ${body.slice(0, 300)}`);
   }
-  const data = (await res.json()) as { access_token?: string };
+  const data = (await res.json()) as { access_token?: string; expires_in?: number };
   if (!data.access_token) {
     throw new Error("HaloPSA token response did not include an access_token.");
   }
+
+  // 60s safety margin so a token doesn't expire mid-request right at the
+  // edge of its lifetime; default to 1h if HaloPSA ever omits expires_in.
+  const expiresInMs = (data.expires_in ?? 3600) * 1000;
+  cachedToken = { token: data.access_token, expiresAt: now + expiresInMs - 60_000, instanceUrl, clientId };
   return data.access_token;
+}
+
+function invalidateHaloAccessToken(): void {
+  cachedToken = null;
+}
+
+function isHaloAuthError(err: unknown): boolean {
+  return err instanceof Error && /\(401\)/.test(err.message);
+}
+
+// Confirmed live: HaloPSA can invalidate a token before its own declared
+// expires_in elapses (a fresh token request immediately after a 401
+// succeeds fine) — without this, the cache above would keep serving that
+// same dead token to every caller for the rest of its claimed lifetime,
+// turning one bad token into a cascading failure across every HaloPSA
+// call this app makes. Wraps "get a (possibly cached) token, call the
+// API" — on a 401 specifically, clears the cache and retries exactly
+// once with a freshly-fetched token; any other error, or a second
+// failure, is a real problem and propagates rather than being swallowed.
+export async function withHaloAuthRetry<T>(
+  instanceUrl: string,
+  clientId: string,
+  clientSecret: string,
+  fn: (accessToken: string) => Promise<T>,
+): Promise<T> {
+  const token = await getHaloAccessToken(instanceUrl, clientId, clientSecret);
+  try {
+    return await fn(token);
+  } catch (err) {
+    if (!isHaloAuthError(err)) throw err;
+    invalidateHaloAccessToken();
+    const freshToken = await getHaloAccessToken(instanceUrl, clientId, clientSecret);
+    return fn(freshToken);
+  }
 }
 
 async function fetchHaloTickets(instanceUrl: string, accessToken: string): Promise<RawHaloRecord[]> {
@@ -228,12 +297,17 @@ async function syncLiveTickets(credential: {
   encryptedClientSecret: string;
 }): Promise<{ synced: number }> {
   const clientSecret = decryptToken(credential.encryptedClientSecret);
-  const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
-  const [rawTickets, agentNames, statusNames] = await Promise.all([
-    fetchHaloTickets(credential.instanceUrl, accessToken),
-    fetchHaloAgentNames(credential.instanceUrl, accessToken),
-    fetchHaloStatusNames(credential.instanceUrl, accessToken),
-  ]);
+  const [rawTickets, agentNames, statusNames] = await withHaloAuthRetry(
+    credential.instanceUrl,
+    credential.clientId,
+    clientSecret,
+    (accessToken) =>
+      Promise.all([
+        fetchHaloTickets(credential.instanceUrl, accessToken),
+        fetchHaloAgentNames(credential.instanceUrl, accessToken),
+        fetchHaloStatusNames(credential.instanceUrl, accessToken),
+      ]),
+  );
 
   if (rawTickets.length > 0) {
     console.log("HaloPSA raw ticket sample (first result, for field-mapping reference):", JSON.stringify(rawTickets[0]));
@@ -276,6 +350,7 @@ async function syncLiveTickets(credential: {
     const fixByAt = mapHaloDate(raw, ["fixbydate"]);
     const respondedAt = mapHaloDate(raw, ["responsedate"]);
     const lastActionAt = mapHaloDate(raw, ["lastactiondate"]);
+    const ticketTypeId = firstNumber(raw, ["tickettype_id"]) ?? null;
     const haloClientId = firstString(raw, ["client_id", "clientid"]) ?? null;
     // Raw client_name off the ticket — confirmed live to be reliably
     // populated (50/50 on a real open-ticket sync) and already on this
@@ -291,6 +366,7 @@ async function syncLiveTickets(credential: {
         priority,
         assignedTech,
         department,
+        ticketTypeId,
         slaDueAt,
         respondByAt,
         fixByAt,
@@ -307,6 +383,7 @@ async function syncLiveTickets(credential: {
         priority,
         assignedTech,
         department,
+        ticketTypeId,
         openedAt,
         slaDueAt,
         respondByAt,
@@ -445,11 +522,16 @@ export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: stri
 
   try {
     const clientSecret = decryptToken(credential.encryptedClientSecret);
-    const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
-    const { weekly: hoursByTech, daily: dailyByTech } = await withComputeThrottle(
-      "weeklyHoursByTech",
-      HOURS_THROTTLE_MS,
-      () => computeWeeklyHoursByTech(credential.instanceUrl, accessToken),
+    const { weekly: hoursByTech, daily: dailyByTech } = await withHaloAuthRetry(
+      credential.instanceUrl,
+      credential.clientId,
+      clientSecret,
+      (accessToken) =>
+        withComputeThrottle(
+          "weeklyHoursByTech",
+          HOURS_THROTTLE_MS,
+          () => computeWeeklyHoursByTech(credential.instanceUrl, accessToken),
+        ),
     );
 
     const periodStart = startOfWeek();

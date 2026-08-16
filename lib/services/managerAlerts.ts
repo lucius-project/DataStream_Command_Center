@@ -15,6 +15,7 @@
 import { prisma } from "@/lib/prisma";
 import { isBusinessHours, formatDuration } from "@/lib/dateUtils";
 import { haloTicketUrl } from "@/lib/integrations/haloShared";
+import { PROJECT_TICKET_TYPE_IDS } from "@/lib/integrations/halopsa";
 import type { ContactDirectory } from "@/lib/integrations/contactDirectory";
 import type { TicketPriority } from "@/app/generated/prisma/client";
 import { getTechActionableTickets, getStaleTickets } from "./operations";
@@ -64,6 +65,18 @@ const OVERLOAD_RATIO = 1.5;
 const PICKUP_RATE_DECLINE_PTS = 5;
 const MISSING_TIME_CHECK_AFTER_HOUR = 13; // don't flag "0h logged" before early afternoon
 
+// Project/Project Task tickets (PROJECT_TICKET_TYPE_IDS, halopsa.ts)
+// live in their own project workflow, not the service desk queue these
+// alert rules are tuned for — excluded from every ticket-based alert
+// below. Filtered here (per alert generator), not by changing the
+// shared fetchers (getTechActionableTickets/getStaleTickets/
+// getSlaAtRiskTickets) themselves, since those are also read by other
+// pages (Dispatch, SLA At Risk section, Tech Performance scoring) that
+// should keep seeing every ticket type.
+function isProjectTicket(ticketTypeId: number | null): boolean {
+  return ticketTypeId !== null && PROJECT_TICKET_TYPE_IDS.has(ticketTypeId);
+}
+
 function priorityWeight(p: TicketPriority): number {
   return p === "P1" ? 0 : p === "P2" ? 1 : p === "P3" ? 2 : 3;
 }
@@ -79,6 +92,7 @@ async function p1p2Unattended(instanceUrl: string | null): Promise<ManagerAlert[
   const tickets = await getTechActionableTickets();
   const alerts: ManagerAlert[] = [];
   for (const t of tickets) {
+    if (isProjectTicket(t.ticketTypeId)) continue;
     if (t.priority !== "P1" && t.priority !== "P2") continue;
     const minutesSince = Math.round((now.getTime() - (t.lastActionAt ?? t.openedAt).getTime()) / 60000);
     if (minutesSince < P1P2_UNATTENDED_MINUTES) continue;
@@ -106,7 +120,11 @@ async function p1p2Unattended(instanceUrl: string | null): Promise<ManagerAlert[
 // CRITICAL: a P1/P2 ticket nobody owns yet.
 async function priorityUnassigned(instanceUrl: string | null): Promise<ManagerAlert[]> {
   const tickets = await prisma.ticketSnapshot.findMany({
-    where: { assignedTech: "Unassigned", priority: { in: ["P1", "P2"] } },
+    where: {
+      assignedTech: "Unassigned",
+      priority: { in: ["P1", "P2"] },
+      ticketTypeId: { notIn: [...PROJECT_TICKET_TYPE_IDS] },
+    },
   });
   return tickets.map((t) => ({
     id: `unassigned-${t.id}`,
@@ -169,7 +187,7 @@ function slaRiskText(dueAt: Date, respondedAt: Date | null): string {
 // duplicated as a second "approaching" warning.
 function slaApproachingBreach(slaAtRisk: SlaAtRiskTicket[], instanceUrl: string | null): ManagerAlert[] {
   return slaAtRisk
-    .filter((t) => t.minutesRemaining >= 0)
+    .filter((t) => t.minutesRemaining >= 0 && !isProjectTicket(t.ticketTypeId))
     .map((t) => ({
       id: `sla-risk-${t.id}-${t.slaType}`,
       severity: "WARNING" as const,
@@ -193,7 +211,9 @@ function slaApproachingBreach(slaAtRisk: SlaAtRiskTicket[], instanceUrl: string 
 // ticket with no update in >24 business hours.
 async function staleTicketAlerts(instanceUrl: string | null): Promise<ManagerAlert[]> {
   const stale = await getStaleTickets();
-  return stale.map((t) => ({
+  return stale
+    .filter((t) => !isProjectTicket(t.ticketTypeId))
+    .map((t) => ({
     id: `stale-${t.id}`,
     severity: "WARNING" as const,
     category: "Stale ticket",
@@ -360,7 +380,11 @@ async function clientTicketSpike(): Promise<ManagerAlert[]> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tickets = await prisma.ticketSnapshot.findMany({
-    where: { openedAt: { gte: today }, clientName: { not: null } },
+    where: {
+      openedAt: { gte: today },
+      clientName: { not: null },
+      ticketTypeId: { notIn: [...PROJECT_TICKET_TYPE_IDS] },
+    },
     select: { clientName: true },
   });
   const counts = new Map<string, number>();

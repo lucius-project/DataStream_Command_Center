@@ -10,7 +10,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/crypto";
-import { getHaloAccessToken, KNOWN_TECHS, type Tech } from "./halopsa";
+import { withHaloAuthRetry, KNOWN_TECHS, type Tech } from "./halopsa";
 import {
   firstString,
   firstNumber,
@@ -123,17 +123,22 @@ export async function syncClientProfitability(): Promise<{ synced: number; error
 
   try {
     const clientSecret = decryptToken(credential.encryptedClientSecret);
-    const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
 
-    const [rawClients, rawContracts, { hoursByClient, hoursByClientAndTech }] = await Promise.all([
-      fetchHaloClients(credential.instanceUrl, accessToken),
-      fetchHaloClientContracts(credential.instanceUrl, accessToken),
-      withComputeThrottle(
-        "hoursThisMonthByClient",
-        HOURS_THROTTLE_MS,
-        () => computeHoursThisMonthByClient(credential.instanceUrl, accessToken),
-      ),
-    ]);
+    const [rawClients, rawContracts, { hoursByClient, hoursByClientAndTech }] = await withHaloAuthRetry(
+      credential.instanceUrl,
+      credential.clientId,
+      clientSecret,
+      (accessToken) =>
+        Promise.all([
+          fetchHaloClients(credential.instanceUrl, accessToken),
+          fetchHaloClientContracts(credential.instanceUrl, accessToken),
+          withComputeThrottle(
+            "hoursThisMonthByClient",
+            HOURS_THROTTLE_MS,
+            () => computeHoursThisMonthByClient(credential.instanceUrl, accessToken),
+          ),
+        ]),
+    );
 
     if (rawClients.length > 0) {
       console.log("HaloPSA raw client sample (first result, for field-mapping reference):", JSON.stringify(rawClients[0]));
@@ -216,25 +221,31 @@ export async function backfillClientMonthlyHours(): Promise<{ months: string[]; 
 
   try {
     const clientSecret = decryptToken(credential.encryptedClientSecret);
-    const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
 
-    const rawTickets = await fetchHaloTicketHistory(credential.instanceUrl, accessToken);
-    const ticketClientPairs = rawTickets
-      .map((raw) => ({
-        ticketId: firstString(raw, ["id", "ticket_id"]),
-        haloClientId: firstString(raw, ["client_id"]),
-      }))
-      .filter((t): t is { ticketId: string; haloClientId: string } => Boolean(t.ticketId && t.haloClientId));
+    const actionsPerTicket = await withHaloAuthRetry(
+      credential.instanceUrl,
+      credential.clientId,
+      clientSecret,
+      async (accessToken) => {
+        const rawTickets = await fetchHaloTicketHistory(credential.instanceUrl, accessToken);
+        const ticketClientPairs = rawTickets
+          .map((raw) => ({
+            ticketId: firstString(raw, ["id", "ticket_id"]),
+            haloClientId: firstString(raw, ["client_id"]),
+          }))
+          .filter((t): t is { ticketId: string; haloClientId: string } => Boolean(t.ticketId && t.haloClientId));
 
-    // Concurrency kept modest (not e.g. 20+) on top of haloGet's own 429
-    // retry/backoff — up to ~1000 tickets in one backfill run is already
-    // most of HaloPSA's 700-per-5-minute budget; firing them in a tight
-    // burst makes every request likely to collide with the limit instead
-    // of just some of them.
-    const actionsPerTicket = await mapWithConcurrency(ticketClientPairs, 5, async (t) => ({
-      haloClientId: t.haloClientId,
-      actions: await fetchHaloActionsForTicket(credential.instanceUrl, accessToken, t.ticketId),
-    }));
+        // Concurrency kept modest (not e.g. 20+) on top of haloGet's own
+        // 429 retry/backoff — up to ~1000 tickets in one backfill run is
+        // already most of HaloPSA's 700-per-5-minute budget; firing them
+        // in a tight burst makes every request likely to collide with the
+        // limit instead of just some of them.
+        return mapWithConcurrency(ticketClientPairs, 5, async (t) => ({
+          haloClientId: t.haloClientId,
+          actions: await fetchHaloActionsForTicket(credential.instanceUrl, accessToken, t.ticketId),
+        }));
+      },
+    );
 
     // ClientMonthlyHours.clientId is a foreign key to our own Client rows,
     // not HaloPSA's — map haloClientId to our internal id up front.

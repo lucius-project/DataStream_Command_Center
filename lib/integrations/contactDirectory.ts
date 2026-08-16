@@ -36,7 +36,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/crypto";
-import { getHaloAccessToken, type Tech } from "./halopsa";
+import { withHaloAuthRetry, type Tech } from "./halopsa";
 import { normalizeInstanceUrl, firstString, withComputeThrottle, HOURS_THROTTLE_MS } from "./haloShared";
 import { getUnitedCloudExtensionDirectory } from "./unitedCloud";
 
@@ -64,19 +64,20 @@ async function fetchPhoneToCompany(): Promise<Map<string, string>> {
   if (!credential) return phoneToCompany;
 
   const clientSecret = decryptToken(credential.encryptedClientSecret);
-  const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
   const base = normalizeInstanceUrl(credential.instanceUrl);
 
-  const usersRes = await fetch(`${base}/api/Users?count=5000`, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!usersRes.ok) {
-    const body = await usersRes.text().catch(() => "");
-    throw new Error(`HaloPSA Users request failed (${usersRes.status}): ${body.slice(0, 300)}`);
-  }
+  const users = await withHaloAuthRetry(credential.instanceUrl, credential.clientId, clientSecret, async (accessToken) => {
+    const usersRes = await fetch(`${base}/api/Users?count=5000`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!usersRes.ok) {
+      const body = await usersRes.text().catch(() => "");
+      throw new Error(`HaloPSA Users request failed (${usersRes.status}): ${body.slice(0, 300)}`);
+    }
 
-  const usersData: unknown = await usersRes.json();
-  const users: Record<string, unknown>[] = Array.isArray(usersData)
-    ? usersData
-    : ((usersData as { users?: unknown[] })?.users ?? []) as Record<string, unknown>[];
+    const usersData: unknown = await usersRes.json();
+    return Array.isArray(usersData)
+      ? (usersData as Record<string, unknown>[])
+      : (((usersData as { users?: unknown[] })?.users ?? []) as Record<string, unknown>[]);
+  });
 
   for (const user of users) {
     const client = firstString(user, ["client_name"]);

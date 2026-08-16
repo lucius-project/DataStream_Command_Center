@@ -7,7 +7,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/crypto";
-import { getHaloAccessToken, type Tech } from "@/lib/integrations/halopsa";
+import { withHaloAuthRetry, type Tech } from "@/lib/integrations/halopsa";
 import { fetchHaloAgentEmails, matchKnownTech } from "@/lib/integrations/haloShared";
 
 // Returns only techs HaloPSA actually has a matching agent+email for —
@@ -20,8 +20,9 @@ export async function getTechEmails(knownTechs: readonly Tech[]): Promise<Map<Te
   if (!credential) return new Map();
 
   const clientSecret = decryptToken(credential.encryptedClientSecret);
-  const accessToken = await getHaloAccessToken(credential.instanceUrl, credential.clientId, clientSecret);
-  const agents = await fetchHaloAgentEmails(credential.instanceUrl, accessToken);
+  const agents = await withHaloAuthRetry(credential.instanceUrl, credential.clientId, clientSecret, (accessToken) =>
+    fetchHaloAgentEmails(credential.instanceUrl, accessToken),
+  );
 
   const emails = new Map<Tech, string>();
   for (const agent of agents) {
