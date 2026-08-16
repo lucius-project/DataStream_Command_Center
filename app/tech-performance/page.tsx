@@ -54,11 +54,14 @@ import { TechPerformanceRow } from "@/components/tech-performance/TechPerformanc
 import { TechComparisonTable, type TechComparisonEntry } from "@/components/tech-performance/TechComparisonTable";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
 import { OrgKpiStrip } from "@/components/tech-performance/OrgKpiStrip";
-import { NeedsAttentionSection } from "@/components/service-desk/NeedsAttentionSection";
+import { RmmOrgSummary } from "@/components/tech-performance/RmmOrgSummary";
+import { TicketHealthKpiTile } from "@/components/tech-performance/TicketHealthKpiTile";
+import { Stat } from "@/components/tech-performance/shared";
 import { SlaAtRiskSection } from "@/components/service-desk/SlaAtRiskSection";
 import { ManagerActionQueue } from "@/components/service-desk/ManagerActionQueue";
 import { CoachingSection } from "@/components/service-desk/CoachingSection";
 import { MorningBriefCard } from "@/components/service-desk/MorningBriefCard";
+import { InfoButton } from "@/components/shared/InfoButton";
 
 export default async function TechPerformancePage() {
   const session = await requireSignedIn();
@@ -359,7 +362,8 @@ export default async function TechPerformancePage() {
     <div className="mx-auto max-w-5xl p-4 md:p-6">
       <h1 className="font-display text-2xl font-semibold text-text">Tech Performance</h1>
       <p className="mt-1 text-sm text-text-muted">
-        Morning Brief, then team and per-tech detail — everything a Service Desk Manager needs today.
+        Summary, then Ticket/Phone/RMM/Team detail and per-tech performance — everything a Service Desk Manager needs
+        today.
       </p>
 
       <div className="mt-4">
@@ -374,41 +378,125 @@ export default async function TechPerformancePage() {
         </div>
       )}
 
-      <div className="mt-6">
-        <h2 className="font-display text-sm font-medium text-text-muted">Team Detail</h2>
-        {clientLinkCoverage.total > 0 && (
-          <p className="mt-0.5 font-data text-[11px] text-text-faint">
-            {clientLinkCoverage.linked} of {clientLinkCoverage.total} clients linked to NinjaOne — remote-session-to-ticket
-            matching is only possible for linked clients (link accounts from a client&apos;s own page).
-          </p>
-        )}
+      {/* Four detail panels, same card treatment as Summary above
+          (rounded-lg border + bg-panel + a small uppercase font-data
+          label) instead of the plain <h2> every section further down
+          this page still uses — these four sit right below Summary, so
+          a visual mismatch here read as jarring in a way it wouldn't
+          further down. Split by domain (ticket/phone/RMM) rather than
+          the old single "Team Detail" grab-bag, so each is scannable on
+          its own; Team Details is what's left over once the other three
+          take their pieces — team-wide hours/pace plus the per-tech
+          comparison table, neither of which is ticket/phone/RMM-specific. */}
+
+      <div className="mt-6 rounded-lg border border-border bg-panel p-4">
+        <div className="flex items-center gap-1.5">
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">Ticket Details</span>
+          <InfoButton
+            title="Ticket Details"
+            what="Everything ticket-related for the whole desk in one place: the team's open/aging/P1/on-hold counts (click the Ticket Health tile for the flagged-items list), then SLA At Risk and Manager Action Queue below."
+            meaning={`${org.openCount} open, ${org.p1Count} P1, ${org.agingCount} aging past 24h, ${org.onHoldCount} on hold, ${alerts.length} alert${alerts.length === 1 ? "" : "s"} flagged.`}
+            calculation="Counts are whole-team totals across every known technician's tickets. See each sub-section's own info button for how its specific list is built."
+          />
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {orgKpis
+            .filter((k) => k.key === "ticketHealth")
+            .map((kpi) => (
+              <TicketHealthKpiTile key={kpi.key} kpi={kpi} alerts={alerts} knownTechs={KNOWN_TECHS} />
+            ))}
+        </div>
+
+        <div className="mt-3 font-data text-[11px]">
+          <span className="flex flex-wrap gap-x-2.5">
+            <Stat value={org.openCount} label="open" />
+            <Stat value={org.p1Count} label="P1" tone={org.p1Count > 0 ? "critical" : undefined} />
+            <Stat value={org.agingCount} label="aging" tone={org.agingCount > 0 ? "warn" : undefined} />
+            <Stat value={org.onHoldCount} label="on hold" />
+          </span>
+        </div>
+
+        <div className="mt-4 border-t border-border pt-4">
+          <SlaAtRiskSection tickets={slaAtRisk} knownTechs={KNOWN_TECHS} instanceUrl={instanceUrl} />
+        </div>
+
+        <div className="mt-4 border-t border-border pt-4">
+          <ManagerActionQueue alerts={alerts} />
+        </div>
       </div>
 
-      <div className="mt-3">
-        <OrgKpiStrip kpis={orgKpis} />
+      <div className="mt-3 rounded-lg border border-border bg-panel p-4">
+        <div className="flex items-center gap-1.5">
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">Phone Details</span>
+          <InfoButton
+            title="Phone Details"
+            what="Whole-team phone activity — inbound/outbound call volume, pickup rate, and average pickup time."
+            meaning={`${org.callsInbound} in, ${org.callsOutbound} out, ${org.callsMissed} missed this week.`}
+            calculation="Missed-call count and pickup rate are shown here (not on an individual tech's row) because a hunt-group ring can't be reliably attributed to the one technician who 'should' have answered it — it's a whole-team fact, same reasoning as the org KPI tiles above."
+          />
+        </div>
+
+        <div className="mt-3">
+          <OrgKpiStrip kpis={orgKpis.filter((k) => k.key === "pickupRate" || k.key === "avgPickupTime")} />
+        </div>
+
+        <div className="mt-3 font-data text-[11px]">
+          <span className="flex flex-wrap gap-x-2.5">
+            <Stat value={org.callsInbound} label="in" />
+            <Stat value={org.callsOutbound} label="out" />
+            <Stat value={org.callsMissed} label="missed" tone={org.callsMissed > 0 ? "warn" : undefined} />
+            <Stat value={org.avgAnswerSeconds ?? "—"} label="avg ring (s)" />
+            <Stat value={org.avgTalkMinutes} label="avg talk (min)" />
+          </span>
+        </div>
       </div>
 
-      <div className="mt-3">
-        <TechOrgSummaryRow org={org} todayIndex={todayIndex} />
+      <div className="mt-3 rounded-lg border border-border bg-panel p-4">
+        <div className="flex items-center gap-1.5">
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">RMM Details</span>
+          <InfoButton
+            title="RMM Details"
+            what="Whole-team NinjaOne remote-session activity — sessions, unique devices touched, gross vs. deduplicated (unique) time, and which devices saw the most support this period."
+            meaning={
+              clientLinkCoverage.total > 0
+                ? `${clientLinkCoverage.linked} of ${clientLinkCoverage.total} clients linked to NinjaOne.`
+                : "No clients linked to NinjaOne yet."
+            }
+            calculation="Gross time sums every session's own duration; unique time merges overlapping sessions on the same device first, so simultaneous sessions aren't double-counted. Remote-session-to-ticket matching (see each tech's own card) is only possible for linked clients — link accounts from a client's own page."
+          />
+        </div>
+
+        <div className="mt-3">
+          <RmmOrgSummary analytics={remoteAnalytics} />
+        </div>
       </div>
 
-      <div className="mt-3">
-        <TechComparisonTable entries={techComparisonEntries} />
+      <div className="mt-3 rounded-lg border border-border bg-panel p-4">
+        <div className="flex items-center gap-1.5">
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">Team Details</span>
+          <InfoButton
+            title="Team Details"
+            what="What's left once Ticket/Phone/RMM Details take their own pieces — whole-team hours/pace, and a side-by-side comparison of every technician's headline metrics."
+            meaning={`${org.loggedHours}h logged of ${org.expectedHours}h expected this week across the team.`}
+            calculation="Hours are summed across every technician's logged time entries this week. The comparison table reuses each technician's own numbers from the cards further down the page — click any drillable cell for the underlying ticket list."
+          />
+        </div>
+
+        <div className="mt-3">
+          <OrgKpiStrip kpis={orgKpis.filter((k) => k.key === "teamUtilization")} />
+        </div>
+
+        <div className="mt-3">
+          <TechOrgSummaryRow org={org} todayIndex={todayIndex} bordered={false} showTickets={false} showCalls={false} />
+        </div>
+
+        <div className="mt-3">
+          <TechComparisonTable entries={techComparisonEntries} />
+        </div>
       </div>
 
       <div className="mt-3 flex flex-col gap-2">{techs.map((tech) => techRow(tech))}</div>
-
-      <div className="mt-6">
-        <NeedsAttentionSection alerts={alerts} knownTechs={KNOWN_TECHS} />
-      </div>
-
-      <div className="mt-6">
-        <SlaAtRiskSection tickets={slaAtRisk} knownTechs={KNOWN_TECHS} instanceUrl={instanceUrl} />
-      </div>
-
-      <div className="mt-6">
-        <ManagerActionQueue alerts={alerts} />
-      </div>
 
       <div className="mt-6">
         <CoachingSection insights={coachingInsights} />

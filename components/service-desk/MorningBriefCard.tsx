@@ -31,9 +31,9 @@ export function MorningBriefCard({
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5">
-          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">Morning Brief</span>
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">Summary</span>
           <InfoButton
-            title="Morning Brief"
+            title="Summary"
             what="A five-second summary at the top of the page — every figure here is a plain reshaping of numbers computed elsewhere (Service Desk Health, Manager Alerts, Coaching Insights), never a new or separately-calculated number."
             meaning="Service health is today's live composite score, with a 30-day pop-out. Ticket Trend shows the rolling 30-day created/closed/net total (built from a daily snapshot taken each time this page loads — no background job, so a day nobody opened the page leaves a gap, and the total honestly shows fewer days until 30 real days accumulate), with a daily pop-out for the day-by-day pattern. Response SLA is today's live figure, also with a 30-day pop-out. Phone Answer is deliberately yesterday's, since 'how did phones go yesterday' is a different, more complete question than a still-in-progress today — its own 30-day pop-out uses a fixed executive threshold (99/97), not the admin-editable Call Answer Rate setting."
             calculation="Needs Attention is the same sorted Manager Alerts list as the full Needs Attention section and Manager Action Queue below — click the tile for the list right here, or scroll down for the same thing in place. Positive Highlight is the first positive-tone Coaching Insight, if any exist yet."
