@@ -9,11 +9,13 @@ function NumberField({
   value,
   onChange,
   min = 0,
+  step = 1,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   min?: number;
+  step?: number;
 }) {
   return (
     <label className="flex flex-col gap-1">
@@ -21,6 +23,7 @@ function NumberField({
       <input
         type="number"
         min={min}
+        step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         className="min-h-11 rounded-md border border-border-strong bg-panel-raised px-3 font-data text-sm text-text focus:border-accent focus:outline-none"
@@ -68,6 +71,7 @@ export function ThresholdsForm({ settings }: { settings: KpiSettings }) {
         agingYellowCount: values.agingYellowCount,
         answerRateGreenPct: values.answerRateGreenPct,
         answerRateYellowPct: values.answerRateYellowPct,
+        laborHourlyRate: values.laborHourlyRate,
       }),
     });
     setBusy(false);
@@ -141,6 +145,26 @@ export function ThresholdsForm({ settings }: { settings: KpiSettings }) {
           <NumberField label="Green at/above" value={values.answerRateGreenPct} onChange={(v) => set("answerRateGreenPct", v)} />
           <NumberField label="Yellow at/above" value={values.answerRateYellowPct} onChange={(v) => set("answerRateYellowPct", v)} />
         </div>
+      </div>
+
+      <div>
+        <div className="mb-2 font-data text-[11px] font-semibold tracking-wide text-text-faint uppercase">
+          Client Profitability
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <NumberField
+            label="Service hourly rate ($)"
+            min={0}
+            step={0.01}
+            value={values.laborHourlyRate}
+            onChange={(v) => set("laborHourlyRate", v)}
+          />
+        </div>
+        <p className="mt-1.5 font-data text-[11px] text-text-faint">
+          Client Profitability&apos;s true service cost = hours logged this month × this rate. Update it whenever
+          your real fully-loaded cost per hour changes — leave at 0 to leave service cost unset rather than
+          implying it&apos;s free.
+        </p>
       </div>
 
       {error && <div className="text-xs text-status-critical">{error}</div>}

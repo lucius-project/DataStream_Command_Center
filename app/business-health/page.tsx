@@ -10,9 +10,11 @@ import { ActionList } from "@/components/business-health/ActionList";
 import { LockedStrip } from "@/components/business-health/LockedStrip";
 import { HealthChat } from "@/components/business-health/HealthChat";
 
-// Deliberately does NOT call syncClientFinancials/syncSeatReconciliation
-// (per-client fan-out, N live QuickBooks/NinjaRMM calls per client) or
-// backfillClientMonthlyHours (explicit user-triggered action). This page
+// Deliberately does NOT call syncAllClientFinancials/syncSeatReconciliation
+// (seat reconciliation is still a per-client NinjaRMM fan-out; financials
+// itself is now a fixed 3-query batch, but there's no reason for this page
+// to duplicate a sync /clients already runs) or backfillClientMonthlyHours
+// (explicit user-triggered action). This page
 // reads whatever ClientFinancials/SeatReconciliation rows already exist
 // from prior /clients visits — see lib/services/businessHealth.ts's
 // "unavailable" coverage handling. The syncs below are all either a fixed

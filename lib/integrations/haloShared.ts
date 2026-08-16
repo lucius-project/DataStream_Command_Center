@@ -218,6 +218,47 @@ export async function fetchHaloClientContracts(instanceUrl: string, accessToken:
   return unwrapList(data, "contracts");
 }
 
+// Recurring billing templates — one per contract's active billing setup,
+// tied back via contract_id. Confirmed live: the bulk list form below
+// does NOT include each invoice's line items (real name/qty/unit_price
+// per billed item), only the single-record detail endpoint does — see
+// fetchHaloRecurringInvoiceLines. This list call is cheap (one request,
+// ~40 rows on this instance) and exists to know which recurring invoice
+// ids are worth a detail fetch, and which contract/client each belongs to.
+export async function fetchHaloRecurringInvoices(instanceUrl: string, accessToken: string): Promise<RawHaloRecord[]> {
+  const data = await haloGet(instanceUrl, accessToken, "/api/RecurringInvoice?count=1000");
+  return unwrapList(data, "invoices");
+}
+
+// One request per recurring invoice — this is the only endpoint that
+// actually returns billed line items (item name, quantity, unit price),
+// confirmed against a real response. Bounded by how many recurring
+// invoices exist (dozens on this instance, not hundreds), same
+// "small, explicit fan-out" cost profile as fetchHaloActionsForTicket,
+// so it's fine to call once per recurring invoice via mapWithConcurrency
+// rather than needing its own throttle.
+export async function fetchHaloRecurringInvoiceLines(
+  instanceUrl: string,
+  accessToken: string,
+  recurringInvoiceId: string,
+): Promise<RawHaloRecord[]> {
+  const data = await haloGet(instanceUrl, accessToken, `/api/RecurringInvoice/${recurringInvoiceId}`);
+  if (!data || typeof data !== "object") return [];
+  const lines = (data as RawHaloRecord).lines;
+  return Array.isArray(lines) ? (lines as RawHaloRecord[]) : [];
+}
+
+// HaloPSA's own billable-item catalog — confirmed live to carry a real
+// wholesale cost (costprice) for resold products (Microsoft NCE seats,
+// Fortress Security, DataStream Protect, etc.), not just a stub field.
+// One bulk call, ~300 rows on this instance — a recurring invoice
+// line's own _itemid cross-references a row here, giving real per-item
+// margin without a second per-item fetch.
+export async function fetchHaloItems(instanceUrl: string, accessToken: string): Promise<RawHaloRecord[]> {
+  const data = await haloGet(instanceUrl, accessToken, "/api/Item?count=1000");
+  return unwrapList(data, "items");
+}
+
 // Tickets only carry a numeric agent_id, not a name — this resolves it.
 // Returns a Map<agentId, name> built from /api/Agent (a plain array on
 // this instance, so unwrapList's Array.isArray branch handles it).

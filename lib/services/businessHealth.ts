@@ -155,7 +155,7 @@ async function kpiGrossMargin(): Promise<Kpi> {
     value: round1(pct),
     display: `${Math.round(pct)}%`,
     status,
-    detail: `${count} of ${clientCount} clients have synced financials · labor cost estimated from a blended payroll rate · as of ${asOf}`,
+    detail: `${count} of ${clientCount} clients have synced financials · service cost = hours × the admin-set service rate · as of ${asOf}`,
     benchmark: "healthy range 50–60%",
     href: "/clients",
   };

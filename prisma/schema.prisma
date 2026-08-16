@@ -643,6 +643,7 @@ model Client {
   monthlyHours   ClientMonthlyHours[]
   financials     ClientFinancials?
   seatChecks     SeatReconciliation[]
+  laborMonthly   ClientLaborMonthly[]
 }
 
 // Recomputed on every sync (no historical ledger), same pattern as
@@ -659,6 +660,45 @@ model ClientFinancials {
   itemRevenue      Float    @default(0)
   netProfit        Float    @default(0)
   updatedAt        DateTime @updatedAt
+}
+
+// Monthly snapshot of the "Service" agreement line (see
+// categorizeAgreementItem — model/field names below still say "labor",
+// the UI calls it "Service"; not renamed to avoid a migration for a
+// pure display-text change) against real hours and the admin-set rate —
+// powers Client Profitability's Effective Hourly Rate and Service
+// Profit widgets, each with a 12-month trend. One row written per
+// (client, current yearMonth) every time syncClientProfitability runs
+// (lib/integrations/haloClients.ts); never backfilled for past months —
+// HaloPSA's RecurringInvoice only ever reflects *today's* pricing, so
+// there is no honest way to know what a line item cost 6 months ago.
+// Same "builds up real history from today forward, no fabricated past"
+// pattern as ServiceDeskHealthDaily/TechScoreDaily/ClientMonthlyHours.
+// hourlyRateUsed/hoursThisMonth are frozen at write time so a later
+// change to KpiSettings.laborHourlyRate doesn't retroactively rewrite
+// already-recorded months.
+model ClientLaborMonthly {
+  id        String @id @default(cuid())
+  clientId  String
+  client    Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  yearMonth String // "YYYY-MM"
+
+  laborLineValue Float // this month's Service agreement value
+
+  // Managed Essential IT ÷ trailing-3-month average hours — null (not 0)
+  // when there isn't yet a full trailing window to average.
+  avgHoursLastQuarter Float?
+  effectiveHourlyRate Float?
+
+  hoursThisMonth Float // frozen copy of Client.hoursThisMonth at write time
+  hourlyRateUsed Float // frozen copy of KpiSettings.laborHourlyRate at write time
+  laborCost      Float // hoursThisMonth × hourlyRateUsed
+  laborProfit    Float // laborLineValue - laborCost
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([clientId, yearMonth])
+  @@index([clientId])
 }
 
 // One row per (client, tool) — NinjaRMM's installed count for that tool
@@ -684,6 +724,23 @@ model AgreementItem {
   name         String
   contractType String?
   quantity     Float    @default(1)
+  // Real per-unit recurring price from HaloPSA's /api/RecurringInvoice
+  // line items (unit_price), not the contract itself — /api/ClientContract
+  // never exposes pricing (confirmed live). Null for a contract with no
+  // matching active recurring invoice line (e.g. a one-time/T&M
+  // engagement) — never fabricated, never defaulted to 0.
+  unitPrice    Float?
+  // Real per-unit wholesale cost from HaloPSA's own /api/Item catalog
+  // (costprice), joined via each recurring invoice line's _itemid —
+  // confirmed live to be genuinely populated for resold products (e.g.
+  // "Fortress Security 2025 | Advanced Security" costprice=13.62,
+  // "DataStream Protect | Virtual Machine Server" costprice=28.99), not
+  // just a stub field. Null when unpriced or the catalog item has no
+  // cost on file — never defaulted to 0, which would fabricate 100%
+  // margin. Not meaningful for the Service category (its cost is hours
+  // × the admin-set rate, not a purchased good — see ClientLaborMonthly),
+  // so it's simply null/0 there.
+  unitCost     Float?
   createdAt    DateTime @default(now())
 
   @@index([clientId])
@@ -892,6 +949,18 @@ model KpiSettings {
   // STALE_BUSINESS_HOURS (operations.ts).
   callbackTargetMinutes Int @default(15)
   staleBusinessHours    Int @default(24)
+
+  // Client Profitability's true service cost = hoursThisMonth × this rate
+  // (lib/integrations/quickbooks.ts's syncAllClientFinancials) — replaces
+  // the old blended-payroll-÷-hours estimate, which the business never
+  // directly controls and was only ever a guess at which QuickBooks
+  // Purchase accounts are payroll. 0 means "not configured yet," not
+  // "service is free" — callers treat <= 0 as unavailable and say so in
+  // the UI rather than silently computing a $0 cost. Field name kept as
+  // "labor" (not renamed to match the UI's "Service" label) to avoid a
+  // migration for a pure display-text change — see
+  // lib/services/clientProfitability.ts's own comment on this.
+  laborHourlyRate Float @default(0)
 
   // Service-Desk-relevant SLA/status color bands (green-at-or-above,
   // yellow-at-or-above, red below yellow — see bandHigherIsBetter/

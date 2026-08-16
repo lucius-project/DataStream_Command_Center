@@ -68,7 +68,7 @@ export function QuickBooksConnectionCard({
         name="QuickBooks Online"
         statusLabel={credentialStatus.configured ? "Not connected" : "Not configured"}
         tone="off"
-        description="Powers Company Profile financials (revenue, labor cost, item margin)."
+        description="Powers Company Profile financials (revenue, service cost, item margin)."
       >
         <div className="flex flex-col gap-3">
           {credentialStatus.configured && (
