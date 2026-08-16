@@ -53,6 +53,15 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      // The beforeInteractive theme script above intentionally adds a
+      // "dark" class to this element before React hydrates (so there's
+      // no flash of the wrong theme) — the server has no way to know a
+      // visitor's stored/system preference, so this one attribute is
+      // expected to legitimately differ between server and client HTML.
+      // suppressHydrationWarning only covers this element's own
+      // attributes, not its children or any other real mismatch
+      // elsewhere in the tree.
+      suppressHydrationWarning
     >
       <body className="flex h-full min-h-screen bg-bg text-text">
         <Script id="theme-init" strategy="beforeInteractive">
