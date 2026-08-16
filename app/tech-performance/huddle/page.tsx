@@ -5,6 +5,7 @@ import {
   getServiceDeskHealthSnapshot,
   getServiceDeskHealthWeekAgo,
   getServiceDeskHealthYesterday,
+  getTicketTrend30DayTotal,
   getSlaAtRiskTickets,
 } from "@/lib/services/serviceDeskHealth";
 import { getBacklogBreakdown, getStaleTickets } from "@/lib/services/operations";
@@ -36,20 +37,37 @@ import { InsightCard } from "@/components/service-desk/CoachingSection";
 // only new code is the assembly.
 export default async function TechPerformanceHuddlePage() {
   await requireRole("SERVICE_MANAGER");
-  const directory = await getContactDirectory().catch(() => null);
+  // Same error-preserving pattern as app/calls/page.tsx and the main
+  // /tech-performance page — a failure here shouldn't look identical to
+  // "not connected yet."
+  const directoryResult = await getContactDirectory()
+    .then((directory) => ({ directory, error: undefined as string | undefined }))
+    .catch((err) => ({ directory: null, error: err instanceof Error ? err.message : "Directory lookup failed." }));
+  const directory = directoryResult.directory;
 
-  const [healthSnapshot, healthWeekAgo, healthYesterday, slaAtRisk, backlog, staleTickets, kpiSettings, techRoleConfigs, haloCredential] =
-    await Promise.all([
-      getServiceDeskHealthSnapshot(),
-      getServiceDeskHealthWeekAgo(),
-      getServiceDeskHealthYesterday(),
-      getSlaAtRiskTickets(),
-      getBacklogBreakdown(),
-      getStaleTickets(),
-      getKpiSettings(),
-      getTechRoleConfigs(KNOWN_TECHS),
-      prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } }),
-    ]);
+  const [
+    healthSnapshot,
+    healthWeekAgo,
+    healthYesterday,
+    ticketTrend30Day,
+    slaAtRisk,
+    backlog,
+    staleTickets,
+    kpiSettings,
+    techRoleConfigs,
+    haloCredential,
+  ] = await Promise.all([
+    getServiceDeskHealthSnapshot(),
+    getServiceDeskHealthWeekAgo(),
+    getServiceDeskHealthYesterday(),
+    getTicketTrend30DayTotal(),
+    getSlaAtRiskTickets(),
+    getBacklogBreakdown(),
+    getStaleTickets(),
+    getKpiSettings(),
+    getTechRoleConfigs(KNOWN_TECHS),
+    prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } }),
+  ]);
   // Null when HaloPSA isn't connected yet — TechFocusSection then shows
   // ticket titles as plain text instead of a link, never a guessed URL.
   const instanceUrl = haloCredential?.instanceUrl ?? null;
@@ -130,6 +148,7 @@ export default async function TechPerformanceHuddlePage() {
   const morningBrief = buildMorningBrief(
     healthSnapshot.healthScore,
     healthYesterday,
+    ticketTrend30Day,
     healthSnapshot.responseSla.status === "available" ? healthSnapshot.responseSla.pct : null,
     kpiSettings.responseSlaGreenPct,
     kpiSettings.responseSlaYellowPct,
@@ -142,8 +161,14 @@ export default async function TechPerformanceHuddlePage() {
       <h1 className="font-display text-2xl font-semibold text-text">Huddle Mode</h1>
       <p className="mt-1 text-sm text-text-muted">Everything for a short morning meeting, on one screen.</p>
 
+      {directoryResult.error && (
+        <div className="mt-4 rounded-md border border-status-critical/40 bg-status-critical-dim px-4 py-3 text-sm text-status-critical">
+          Directory lookup failed, showing numbers instead: {directoryResult.error}
+        </div>
+      )}
+
       <div className="mt-4">
-        <MorningBriefCard brief={morningBrief} huddleActive />
+        <MorningBriefCard brief={morningBrief} knownTechs={KNOWN_TECHS} huddleActive />
       </div>
 
       <div className="mt-6">

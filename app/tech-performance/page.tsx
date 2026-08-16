@@ -11,6 +11,7 @@ import {
   syncServiceDeskHealthDaily,
   getServiceDeskHealthWeekAgo,
   getServiceDeskHealthYesterday,
+  getTicketTrend30DayTotal,
 } from "@/lib/services/serviceDeskHealth";
 import { generateManagerAlerts } from "@/lib/services/managerAlerts";
 import { getCallAnswerRateTrend } from "@/lib/services/callActivity";
@@ -50,6 +51,7 @@ import {
   type TechPerformanceScoreResult,
 } from "@/lib/services/techPerformanceScore";
 import { TechPerformanceRow } from "@/components/tech-performance/TechPerformanceRow";
+import { TechComparisonTable, type TechComparisonEntry } from "@/components/tech-performance/TechComparisonTable";
 import { TechOrgSummaryRow } from "@/components/tech-performance/TechOrgSummaryRow";
 import { OrgKpiStrip } from "@/components/tech-performance/OrgKpiStrip";
 import { NeedsAttentionSection } from "@/components/service-desk/NeedsAttentionSection";
@@ -70,18 +72,36 @@ export default async function TechPerformancePage() {
   // so both this week's TicketLoadWeekly snapshot and the new Service
   // Desk Health section reflect freshly-synced ticket data, not whatever
   // was on disk before this page load.
-  const [ticketLoadSync, directory, healthSnapshot, slaAtRisk, healthWeekAgo, healthYesterday, kpiSettings, techRoleConfigs, haloCredential] =
-    await Promise.all([
-      syncTicketLoadHistory(),
-      getContactDirectory().catch(() => null),
-      getServiceDeskHealthSnapshot(),
-      getSlaAtRiskTickets(),
-      getServiceDeskHealthWeekAgo(),
-      getServiceDeskHealthYesterday(),
-      getKpiSettings(),
-      getTechRoleConfigs(KNOWN_TECHS),
-      prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } }),
-    ]);
+  const [
+    ticketLoadSync,
+    directoryResult,
+    healthSnapshot,
+    slaAtRisk,
+    healthWeekAgo,
+    healthYesterday,
+    ticketTrend30Day,
+    kpiSettings,
+    techRoleConfigs,
+    haloCredential,
+  ] = await Promise.all([
+    syncTicketLoadHistory(),
+    // Same error-preserving pattern as app/calls/page.tsx — a failure
+    // here (e.g. an expired HaloPSA token) shouldn't look identical to
+    // "not connected yet," so it's folded into syncErrors below rather
+    // than silently discarded.
+    getContactDirectory()
+      .then((directory) => ({ directory, error: undefined as string | undefined }))
+      .catch((err) => ({ directory: null, error: err instanceof Error ? err.message : "Directory lookup failed." })),
+    getServiceDeskHealthSnapshot(),
+    getSlaAtRiskTickets(),
+    getServiceDeskHealthWeekAgo(),
+    getServiceDeskHealthYesterday(),
+    getTicketTrend30DayTotal(),
+    getKpiSettings(),
+    getTechRoleConfigs(KNOWN_TECHS),
+    prisma.haloPsaCredential.findUnique({ where: { id: "halopsa" } }),
+  ]);
+  const directory = directoryResult.directory;
   // Null when HaloPSA isn't connected yet — SlaAtRiskSection then shows
   // ticket titles as plain text instead of a link, never a guessed URL.
   const instanceUrl = haloCredential?.instanceUrl ?? null;
@@ -192,6 +212,7 @@ export default async function TechPerformancePage() {
   const morningBrief = buildMorningBrief(
     healthSnapshot.healthScore,
     healthYesterday,
+    ticketTrend30Day,
     healthSnapshot.responseSla.status === "available" ? healthSnapshot.responseSla.pct : null,
     kpiSettings.responseSlaGreenPct,
     kpiSettings.responseSlaYellowPct,
@@ -206,6 +227,7 @@ export default async function TechPerformancePage() {
     remoteSessionSync.error && `NinjaOne: ${remoteSessionSync.error}`,
     healthDailySyncError && `Trend history: ${healthDailySyncError}`,
     techScoreSyncError && `Trend history: ${techScoreSyncError}`,
+    directoryResult.error && `Directory lookup: ${directoryResult.error}`,
   ].filter((e): e is string => Boolean(e));
 
   // One row-building function reused by both the manager's full-team
@@ -297,6 +319,42 @@ export default async function TechPerformancePage() {
     );
   }
 
+  // Headline metrics only, reusing the same role/serviceMetrics/score/
+  // cardData lookups techRow() makes for each card below — every
+  // drilldown row here is the exact same list the matching card's own
+  // DrilldownStat shows, not a second, differently-computed copy.
+  const techComparisonEntries: TechComparisonEntry[] = techs.map((tech) => {
+    const role = roleFor(tech.person, techRoleConfigs);
+    const serviceMetrics = serviceMetricsFor(serviceMetricsByTech, tech.person);
+    const scoreResult = scoreByTech.get(tech.person as Tech)!;
+    const scoreTrend = getTechScoreTrendArrow(scoreResult.score, techScoreWeekAgoByTech.get(tech.person as Tech) ?? null);
+    const cardData = buildTechCardTicketData(
+      ticketsFor(ticketsByTech, tech.person),
+      staleTicketsFor(staleByTech, tech.person),
+      serviceMetrics,
+    );
+    return {
+      person: tech.person,
+      role,
+      status: tech.status,
+      scoreResult,
+      scoreTrend,
+      pacePct: tech.pacePct,
+      openCount: cardData.openCount,
+      openRows: cardData.openRows,
+      agingCount: cardData.agingCount,
+      agingRows: cardData.agingRows,
+      staleCount: serviceMetrics.staleCount,
+      staleRows: cardData.staleRows,
+      responseSla: serviceMetrics.responseSla,
+      responseMissRows: cardData.responseMissRows,
+      resolutionSla: serviceMetrics.resolutionSla,
+      resolutionMissRows: cardData.resolutionMissRows,
+      callsInbound: tech.callsInbound,
+      callsOutbound: tech.callsOutbound,
+    };
+  });
+
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-6">
       <h1 className="font-display text-2xl font-semibold text-text">Tech Performance</h1>
@@ -305,7 +363,7 @@ export default async function TechPerformancePage() {
       </p>
 
       <div className="mt-4">
-        <MorningBriefCard brief={morningBrief} />
+        <MorningBriefCard brief={morningBrief} knownTechs={KNOWN_TECHS} />
       </div>
 
       {syncErrors.length > 0 && (
@@ -332,6 +390,10 @@ export default async function TechPerformancePage() {
 
       <div className="mt-3">
         <TechOrgSummaryRow org={org} todayIndex={todayIndex} />
+      </div>
+
+      <div className="mt-3">
+        <TechComparisonTable entries={techComparisonEntries} />
       </div>
 
       <div className="mt-3 flex flex-col gap-2">{techs.map((tech) => techRow(tech))}</div>
