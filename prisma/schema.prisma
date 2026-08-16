@@ -296,6 +296,13 @@ model TicketSnapshot {
   priority       TicketPriority
   assignedTech   String
   department     String
+  // Raw tickettype_id off the ticket list response (e.g. 5 = "Project",
+  // 20 = "Project Task", confirmed live via /api/TicketType) — used to
+  // exclude project-tracking tickets from Manager Alerts/Needs Attention
+  // (see PROJECT_TICKET_TYPE_IDS, lib/integrations/halopsa.ts). Nullable
+  // since a ticket synced before this field existed, or one HaloPSA
+  // omits the field for, shouldn't be treated as any particular type.
+  ticketTypeId   Int?
   openedAt       DateTime
   // Kept as-is (merged respondbydate-or-fixbydate fallback) — existing
   // consumers (Dispatch pane's SLA countdown, the >24h SLA_BREACH flag,
@@ -400,6 +407,7 @@ model AttentionFlag {
   createdAt    DateTime        @default(now())
   resolvedAt   DateTime?
 
+  @@unique([ticketId, type])
   @@index([status])
 }
 

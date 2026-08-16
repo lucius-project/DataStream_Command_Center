@@ -5,7 +5,7 @@ function Row({ label, value, tone }: { label: string; value: number; tone?: "war
   const toneClass = tone === "critical" ? "text-status-critical" : tone === "warn" ? "text-status-warn" : "text-text";
   return (
     <div className="flex items-center justify-between">
-      <span className="text-text-faint">{label}</span>
+      <span className="text-text-muted">{label}</span>
       <span className={toneClass}>{value}</span>
     </div>
   );

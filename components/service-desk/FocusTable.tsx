@@ -78,6 +78,7 @@ export function FocusTable({ items }: { items: FocusItem[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full min-w-[720px] table-fixed text-left font-data text-xs">
+        <caption className="sr-only">Priority-ordered focus items, {items.length} total</caption>
         <colgroup>
           {/* #, Priority, Type kept as narrow as their content allows;
               Ticket and Breach get the rest of the width — those two are
@@ -89,12 +90,22 @@ export function FocusTable({ items }: { items: FocusItem[] }) {
           <col className="w-20" />
         </colgroup>
         <thead>
-          <tr className="border-b border-border text-text-faint">
-            <th className="py-1.5 pr-3 pl-3 font-normal">#</th>
-            <th className="py-1.5 pr-3 font-normal">Priority</th>
-            <th className="py-1.5 pr-3 font-normal">Ticket</th>
-            <th className="py-1.5 pr-3 font-normal">Breach</th>
-            <th className="py-1.5 pr-3 font-normal">Type</th>
+          <tr className="border-b border-border text-text-muted">
+            <th scope="col" className="py-1.5 pr-3 pl-3 font-normal">
+              #
+            </th>
+            <th scope="col" className="py-1.5 pr-3 font-normal">
+              Priority
+            </th>
+            <th scope="col" className="py-1.5 pr-3 font-normal">
+              Ticket
+            </th>
+            <th scope="col" className="py-1.5 pr-3 font-normal">
+              Breach
+            </th>
+            <th scope="col" className="py-1.5 pr-3 font-normal">
+              Type
+            </th>
           </tr>
         </thead>
         <tbody>

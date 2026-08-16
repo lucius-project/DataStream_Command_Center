@@ -13,7 +13,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { getValidNinjaRmmAccessToken, isNinjaRmmConnected } from "@/lib/auth/ninjaRmmOAuth";
-import { withComputeThrottle } from "./haloShared";
+import { withComputeThrottle, HOURS_THROTTLE_MS } from "./haloShared";
 
 type RawDevice = Record<string, unknown>;
 
@@ -246,7 +246,7 @@ type RawActivity = Record<string, unknown>;
 // Live, unpersisted — same "small directory, always fresh" approach as
 // fetchNinjaOrganizations above. Confirmed live: id (number), firstName,
 // lastName, email, userType ("TECHNICIAN" etc.).
-export async function fetchNinjaUsers(): Promise<Map<string, string>> {
+async function fetchNinjaUsersUnthrottled(): Promise<Map<string, string>> {
   const credential = await prisma.ninjaRmmCredential.findUnique({ where: { id: "ninjarmm" } });
   if (!credential || !(await isNinjaRmmConnected())) return new Map();
 
@@ -271,6 +271,17 @@ export async function fetchNinjaUsers(): Promise<Map<string, string>> {
     if (name) byId.set(id, name);
   }
   return byId;
+}
+
+// Throttled (unlike fetchNinjaOrganizations, deliberately left
+// unthrottled since it also backs /integrations' live "Test Connection"
+// check, which needs to actually hit the API every time it's clicked) —
+// getRemoteSessionAnalytics and getSessionTicketMatches both call this
+// independently within the same /tech-performance page load, which was
+// a real duplicated live NinjaOne API call every time, not just a cheap
+// local re-read.
+export function fetchNinjaUsers(): Promise<Map<string, string>> {
+  return withComputeThrottle("ninjaUsers", HOURS_THROTTLE_MS, fetchNinjaUsersUnthrottled);
 }
 
 const ACTIVITIES_PAGE_SIZE = 250;

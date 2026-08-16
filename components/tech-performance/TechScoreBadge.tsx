@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { X, TrendingUp } from "lucide-react";
+import { TrendingUp } from "lucide-react";
 import type { TechPerformanceScoreResult } from "@/lib/services/techPerformanceScore";
 import type { KpiTrend } from "@/lib/services/businessHealth";
 import { TechScoreTrendModal } from "./TechScoreTrendModal";
+import { Modal } from "@/components/shared/Modal";
 
 function scoreColor(score: number | null): string {
   if (score === null) return "text-text-faint";
@@ -70,54 +71,39 @@ export function TechScoreBadge({
       {trendOpen && <TechScoreTrendModal person={person} onClose={() => setTrendOpen(false)} />}
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="absolute inset-0 bg-black/60" />
-          <div className="relative flex w-full max-w-lg flex-col gap-4 rounded-lg border border-border bg-panel p-5 shadow-xl">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="font-display text-base font-semibold text-text">{person} — Performance Score</div>
-                <div className="mt-0.5 font-data text-[11px] text-text-faint">
-                  Weighted composite, {result.score !== null ? `${result.score}/100` : "unavailable"}
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => setOpen(false)}
-                className="rounded p-1 text-text-faint hover:bg-panel-raised hover:text-text"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="font-data text-[11px] text-text-faint">
-              A single weighted score combining this technician&apos;s Service Delivery, Quality, Productivity, Work
-              Management, and Phone categories into one number — role-normalized, so a senior engineer working hard
-              escalations isn&apos;t held to the same throughput target as a service desk technician. 80+ is green
-              (healthy), 60-79 is yellow (worth watching), below 60 is red (needs attention).
-            </div>
-
-            <div className="flex flex-col gap-3">
-              {result.categories.map((c) => (
-                <div key={c.key} className="rounded-md border border-border bg-panel-raised p-3">
-                  <div className="flex items-baseline justify-between">
-                    <span className="font-display text-sm font-medium text-text">{c.label}</span>
-                    <span className={`font-data text-sm font-semibold ${scoreColor(c.score)}`}>
-                      {c.score !== null ? `${c.score}/100` : "—"}
-                      <span className="ml-1 text-[11px] font-normal text-text-faint">· {c.weightPct}% weight</span>
-                    </span>
-                  </div>
-                  <div className="mt-1 font-data text-[11px] text-text-faint">{c.detail}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="font-data text-[11px] text-text-faint">
-              Weights rebalance proportionally when a category has no data yet — an unavailable category (e.g. Quality,
-              Phone — see below) is excluded, not scored as zero.
-            </div>
+        <Modal
+          title={`${person} — Performance Score`}
+          subtitle={`Weighted composite, ${result.score !== null ? `${result.score}/100` : "unavailable"}`}
+          onClose={() => setOpen(false)}
+          maxWidthClassName="max-w-lg"
+        >
+          <div className="font-data text-[11px] text-text-faint">
+            A single weighted score combining this technician&apos;s Service Delivery, Quality, Productivity, Work
+            Management, and Phone categories into one number — role-normalized, so a senior engineer working hard
+            escalations isn&apos;t held to the same throughput target as a service desk technician. 80+ is green
+            (healthy), 60-79 is yellow (worth watching), below 60 is red (needs attention).
           </div>
-        </div>
+
+          <div className="flex flex-col gap-3">
+            {result.categories.map((c) => (
+              <div key={c.key} className="rounded-md border border-border bg-panel-raised p-3">
+                <div className="flex items-baseline justify-between">
+                  <span className="font-display text-sm font-medium text-text">{c.label}</span>
+                  <span className={`font-data text-sm font-semibold ${scoreColor(c.score)}`}>
+                    {c.score !== null ? `${c.score}/100` : "—"}
+                    <span className="ml-1 text-[11px] font-normal text-text-faint">· {c.weightPct}% weight</span>
+                  </span>
+                </div>
+                <div className="mt-1 font-data text-[11px] text-text-faint">{c.detail}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="font-data text-[11px] text-text-faint">
+            Weights rebalance proportionally when a category has no data yet — an unavailable category (e.g. Quality,
+            Phone — see below) is excluded, not scored as zero.
+          </div>
+        </Modal>
       )}
     </>
   );

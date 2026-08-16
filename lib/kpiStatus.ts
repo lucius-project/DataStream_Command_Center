@@ -19,6 +19,17 @@ export const STATUS_TEXT: Record<KpiStatus, string> = {
   unavailable: "text-text-faint",
 };
 
+// Same wording HealthScoreBreakdownModal.tsx's own scoreStatusLabel
+// established — a visible word alongside the STATUS_DOT color, not
+// color alone, for every consumer of this shared status scale (WCAG
+// 1.4.1: color can't be the only signal).
+export const STATUS_LABEL: Record<KpiStatus, string> = {
+  green: "Healthy",
+  yellow: "Watch",
+  red: "Needs Attention",
+  unavailable: "No data",
+};
+
 // Higher-is-better band: green at/above `green`, yellow at/above `yellow`, red below.
 export function bandHigherIsBetter(value: number, green: number, yellow: number): KpiStatus {
   if (value >= green) return "green";

@@ -107,7 +107,7 @@ export function TechFocusSection({
             <div key={technician} className="rounded-lg border border-border bg-panel p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-display text-base font-semibold text-text">{technician}</span>
+                  <h3 className="font-display text-base font-semibold text-text">{technician}</h3>
                   {stats && <TechStatsRow stats={stats} />}
                 </div>
                 <span className="shrink-0 font-data text-xs text-text-faint">

@@ -103,7 +103,12 @@ no background cron); nothing is mocked once an integration is connected.
 ## Stack
 
 Next.js 16 (App Router, Turbopack) + TypeScript + Tailwind, Prisma 7 + SQLite
-(`better-sqlite3`), Docker Compose for local dev. No test framework is set up
-yet. Server Components fetch data directly — no Server Actions anywhere in
-this app; client-side interactivity calls dedicated `app/api/**/route.ts`
-handlers instead.
+(`better-sqlite3`), Docker Compose for local dev. Server Components fetch data
+directly — no Server Actions anywhere in this app; client-side interactivity
+calls dedicated `app/api/**/route.ts` handlers instead.
+
+`npm test` runs Vitest over pure-logic unit tests (scoring math, KPI status
+banding, business-hours/date math) — no DB or network in any of them. That's
+deliberately the only automated layer: everything else in this app is
+verified live against real data (a running dev server, real integrations),
+not mocked, so there's no integration/e2e suite pretending otherwise.

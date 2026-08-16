@@ -72,10 +72,58 @@ function validateWeightSum(
   }
 }
 
+// Higher-is-better pairs need green >= yellow; the one lower-is-better
+// pair (aging — fewer is better) needs green <= yellow. An inverted
+// pair silently corrupts bandHigherIsBetter/bandLowerIsBetter
+// (lib/kpiStatus.ts) everywhere it's used, with no error anywhere —
+// e.g. a ticket at 60% response SLA reading as green because the
+// intended-green threshold ended up the lower-priority check.
+const HIGHER_IS_BETTER_PAIRS: [green: keyof KpiSettingsUpdate, yellow: keyof KpiSettingsUpdate, label: string][] = [
+  ["responseSlaGreenPct", "responseSlaYellowPct", "Response SLA"],
+  ["resolutionSlaGreenPct", "resolutionSlaYellowPct", "Resolution SLA"],
+  ["answerRateGreenPct", "answerRateYellowPct", "Answer Rate"],
+];
+const LOWER_IS_BETTER_PAIRS: [green: keyof KpiSettingsUpdate, yellow: keyof KpiSettingsUpdate, label: string][] = [
+  ["agingGreenCount", "agingYellowCount", "Aging"],
+];
+
+function validateThresholdOrder(update: KpiSettingsUpdate, current: KpiSettings): void {
+  for (const [greenKey, yellowKey, label] of HIGHER_IS_BETTER_PAIRS) {
+    if (!(greenKey in update) && !(yellowKey in update)) continue;
+    const green = Number(update[greenKey] ?? current[greenKey]);
+    const yellow = Number(update[yellowKey] ?? current[yellowKey]);
+    if (green < yellow) {
+      throw new Error(`${label}: the green threshold (${green}) must be at or above the yellow threshold (${yellow}).`);
+    }
+  }
+  for (const [greenKey, yellowKey, label] of LOWER_IS_BETTER_PAIRS) {
+    if (!(greenKey in update) && !(yellowKey in update)) continue;
+    const green = Number(update[greenKey] ?? current[greenKey]);
+    const yellow = Number(update[yellowKey] ?? current[yellowKey]);
+    if (green > yellow) {
+      throw new Error(`${label}: the green threshold (${green}) must be at or below the yellow threshold (${yellow}).`);
+    }
+  }
+}
+
+// Every field on KpiSettings is a non-negative count/percentage/weight —
+// the client form's HTML min={0} isn't actually enforced (ThresholdsForm
+// posts unconditionally, never calls reportValidity()), so this is the
+// real boundary, same as the weight-sum/threshold-order checks above.
+function validateNonNegative(update: KpiSettingsUpdate): void {
+  for (const [key, value] of Object.entries(update)) {
+    if (typeof value === "number" && value < 0) {
+      throw new Error(`${key} can't be negative (got ${value}).`);
+    }
+  }
+}
+
 export async function updateKpiSettings(update: KpiSettingsUpdate): Promise<KpiSettings> {
   const current = await getKpiSettings();
   validateWeightSum(update, current, HEALTH_WEIGHT_KEYS, "Service Desk Health");
   validateWeightSum(update, current, TECH_WEIGHT_KEYS, "Technician Performance");
+  validateThresholdOrder(update, current);
+  validateNonNegative(update);
   return prisma.kpiSettings.update({ where: { id: SETTINGS_ID }, data: update });
 }
 

@@ -34,13 +34,13 @@ export function MissedCallRecoveryPanel({
       <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div>
           <div className="font-display text-lg font-semibold text-text">{stats.missedCalls}</div>
-          <div className="font-data text-[11px] text-text-faint">missed calls</div>
+          <div className="font-data text-[11px] text-text-muted">missed calls</div>
         </div>
         <div>
           <div className="font-display text-lg font-semibold text-text">
             {stats.status === "available" ? `${stats.callbackPct}%` : "—"}
           </div>
-          <div className="font-data text-[11px] text-text-faint">
+          <div className="font-data text-[11px] text-text-muted">
             callback rate ({stats.returnedCalls}/{stats.missedCalls}
             {stats.status === "insufficient_sample" ? " — small sample" : ""})
           </div>
@@ -49,19 +49,24 @@ export function MissedCallRecoveryPanel({
           <div className="font-display text-lg font-semibold text-text">
             {stats.medianCallbackMinutes !== null ? `${stats.medianCallbackMinutes}m` : "—"}
           </div>
-          <div className="font-data text-[11px] text-text-faint">median callback time</div>
+          <div className="font-data text-[11px] text-text-muted">median callback time</div>
         </div>
         <div>
           <div className="font-display text-lg font-semibold text-text">
             {stats.p90CallbackMinutes !== null ? `${stats.p90CallbackMinutes}m` : "—"}
           </div>
-          <div className="font-data text-[11px] text-text-faint">P90 callback time</div>
+          <div className="font-data text-[11px] text-text-muted">P90 callback time</div>
         </div>
       </div>
 
       {unreturned.length > 0 && (
         <div className="mt-4 flex flex-col gap-2 border-t border-border pt-3">
-          <div className="font-data text-[10px] tracking-wide text-text-faint uppercase">Currently unreturned</div>
+          {/* Not promoted to a heading element — "Missed Call Recovery"
+              itself (above) isn't a heading in this component's own
+              markup, and this panel's placement on the page (no h2/h3
+              wrapper of its own) means a lone h4 here would skip a
+              level. Color-only fix, matching this file's other labels. */}
+          <div className="font-data text-[10px] tracking-wide text-text-muted uppercase">Currently unreturned</div>
           {unreturned.map((c) => (
             <div
               key={c.id}

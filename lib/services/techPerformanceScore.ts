@@ -393,7 +393,11 @@ export function computeTechPerformanceScore(
     detail: c.detail,
   }));
 
-  if (available.length === 0) return { score: null, categories };
+  // Same fabricated-0-score guard as computeHealthScore
+  // (serviceDeskHealth.ts) — baseWeightSum === 0 means every available
+  // category has 0 configured weight, which would otherwise sum to a
+  // false 0/100 instead of "no real signal contributed."
+  if (available.length === 0 || baseWeightSum === 0) return { score: null, categories };
 
   const score = Math.round(categories.reduce((sum, c) => sum + (c.score !== null ? (c.score * c.weightPct) / 100 : 0), 0));
 

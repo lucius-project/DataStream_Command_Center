@@ -17,11 +17,18 @@
   --color-accent-strong: #4338ca;
   --color-accent-dim: #eef2ff;
 
-  --color-status-ok: #16a34a;
+  /* Darkened one Tailwind shade from the original 600s (green-600
+     #16a34a / amber-600 #d97706 / red-600 #dc2626) — measured contrast
+     against both bg-panel (white) and each color's own -dim chip
+     background fell short of WCAG AA's 4.5:1 for normal text (as low as
+     3.07:1), which matters here since this scale is used for real text
+     (StatusPill, KPI tile values, score numbers), not just decorative
+     dots. Dark theme's equivalents already clear 8:1+ and are untouched. */
+  --color-status-ok: #15803d;
   --color-status-ok-dim: #f0fdf4;
-  --color-status-warn: #d97706;
+  --color-status-warn: #b45309;
   --color-status-warn-dim: #fffbeb;
-  --color-status-critical: #dc2626;
+  --color-status-critical: #b91c1c;
   --color-status-critical-dim: #fef2f2;
   --color-status-info: #2563eb;
   --color-status-info-dim: #eff6ff;

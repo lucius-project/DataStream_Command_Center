@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Info, X } from "lucide-react";
+import { Info } from "lucide-react";
+import { Modal } from "./Modal";
 
 // Generic "explain this widget" trigger, reused across every tile/section
 // on /tech-performance and /tech-performance/huddle — see plan for why
@@ -48,50 +49,30 @@ export function InfoButton({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-black/60"
-          />
-          <div className="relative flex w-full max-w-md flex-col gap-3 rounded-lg border border-border bg-panel p-5 shadow-xl">
-            <div className="flex items-start justify-between gap-2">
-              <div className="font-display text-base font-semibold text-text">{title}</div>
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => setOpen(false)}
-                className="shrink-0 rounded p-1 text-text-faint hover:bg-panel-raised hover:text-text"
-              >
-                <X size={18} />
-              </button>
+        <Modal title={title} onClose={() => setOpen(false)}>
+          <div className="flex flex-col gap-1">
+            <div className="font-data text-[10px] font-semibold tracking-wide text-text-faint uppercase">
+              What this measures
             </div>
-
-            <div className="flex flex-col gap-1">
-              <div className="font-data text-[10px] font-semibold tracking-wide text-text-faint uppercase">
-                What this measures
-              </div>
-              <div className="text-sm text-text">{what}</div>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <div className="font-data text-[10px] font-semibold tracking-wide text-text-faint uppercase">
-                What the current value means
-              </div>
-              <div className="text-sm text-text">{meaning}</div>
-            </div>
-
-            {calculation && (
-              <div className="flex flex-col gap-1">
-                <div className="font-data text-[10px] font-semibold tracking-wide text-text-faint uppercase">
-                  How it&apos;s calculated
-                </div>
-                <div className="text-sm text-text-muted">{calculation}</div>
-              </div>
-            )}
+            <div className="text-sm text-text">{what}</div>
           </div>
-        </div>
+
+          <div className="flex flex-col gap-1">
+            <div className="font-data text-[10px] font-semibold tracking-wide text-text-faint uppercase">
+              What the current value means
+            </div>
+            <div className="text-sm text-text">{meaning}</div>
+          </div>
+
+          {calculation && (
+            <div className="flex flex-col gap-1">
+              <div className="font-data text-[10px] font-semibold tracking-wide text-text-faint uppercase">
+                How it&apos;s calculated
+              </div>
+              <div className="text-sm text-text-muted">{calculation}</div>
+            </div>
+          )}
+        </Modal>
       )}
     </>
   );

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { upsertTechRoleConfigs } from "@/lib/services/kpiSettings";
-import type { TechRole } from "@/app/generated/prisma/client";
+import { TechRole } from "@/app/generated/prisma/client";
+
+const VALID_ROLES = new Set<string>(Object.values(TechRole));
 
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as
@@ -13,6 +15,9 @@ export async function POST(request: NextRequest) {
   for (const e of entries) {
     if (!e.person || !e.role || typeof e.expectedWeeklyHours !== "number" || e.expectedWeeklyHours <= 0) {
       return NextResponse.json({ error: "Each entry needs a person, role, and positive expectedWeeklyHours." }, { status: 400 });
+    }
+    if (!VALID_ROLES.has(e.role)) {
+      return NextResponse.json({ error: `"${e.role}" isn't a valid technician role.` }, { status: 400 });
     }
   }
 

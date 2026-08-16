@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { STATUS_DOT, STATUS_TEXT } from "@/lib/kpiStatus";
+import { STATUS_DOT, STATUS_TEXT, STATUS_LABEL } from "@/lib/kpiStatus";
 import type { Kpi } from "@/lib/services/businessHealth";
 
 const TREND_ARROW = { up: "↑", down: "↓", flat: "→" } as const;
@@ -18,9 +18,16 @@ export function KpiTile({ kpi }: { kpi: Kpi }) {
       href={kpi.href}
       className="flex flex-col gap-1 rounded-lg border border-border bg-panel p-3 hover:border-accent"
     >
-      <div className="flex items-center gap-1.5">
-        <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[kpi.status]}`} />
-        <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">{kpi.label}</span>
+      <div className="flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[kpi.status]}`} aria-hidden />
+          <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">{kpi.label}</span>
+        </div>
+        {/* The dot alone was color-only signal (WCAG 1.4.1) — this word
+            says the same thing without relying on color perception. */}
+        <span className={`font-data text-[9px] font-semibold tracking-wide uppercase ${STATUS_TEXT[kpi.status]}`}>
+          {STATUS_LABEL[kpi.status]}
+        </span>
       </div>
       <div className="flex items-baseline gap-1.5">
         <div className={`font-display text-xl font-semibold ${STATUS_TEXT[kpi.status]}`}>{kpi.display}</div>

@@ -57,8 +57,9 @@ function SortableHeader({
   first?: boolean;
 }) {
   const active = sort?.key === sortKey;
+  const ariaSort = active ? (sort!.dir === 1 ? "ascending" : "descending") : "none";
   return (
-    <th className={`py-1.5 pr-3 font-normal ${first ? "pl-3" : ""}`}>
+    <th scope="col" aria-sort={ariaSort} className={`py-1.5 pr-3 font-normal ${first ? "pl-3" : ""}`}>
       <button
         type="button"
         onClick={() => onSort(sortKey)}
@@ -105,16 +106,27 @@ export function ManagerActionQueue({ alerts }: { alerts: ManagerAlert[] }) {
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border bg-panel">
           <table className="w-full min-w-[900px] text-left font-data text-xs">
+            <caption className="sr-only">
+              Manager action queue, {alerts.length} item{alerts.length === 1 ? "" : "s"}, sortable by column
+            </caption>
             <thead>
-              <tr className="border-b border-border text-text-faint">
+              <tr className="border-b border-border text-text-muted">
                 <SortableHeader label="Severity" sortKey="severity" sort={sort} onSort={onSort} first />
-                <th className="py-1.5 pr-3 font-normal">Issue</th>
+                <th scope="col" className="py-1.5 pr-3 font-normal">
+                  Issue
+                </th>
                 <SortableHeader label="Client" sortKey="client" sort={sort} onSort={onSort} />
-                <th className="py-1.5 pr-3 font-normal">Ticket / Call</th>
+                <th scope="col" className="py-1.5 pr-3 font-normal">
+                  Ticket / Call
+                </th>
                 <SortableHeader label="Technician" sortKey="technician" sort={sort} onSort={onSort} />
                 <SortableHeader label="Age" sortKey="age" sort={sort} onSort={onSort} />
-                <th className="py-1.5 pr-3 font-normal">SLA Risk</th>
-                <th className="py-1.5 pr-3 font-normal">Recommended Action</th>
+                <th scope="col" className="py-1.5 pr-3 font-normal">
+                  SLA Risk
+                </th>
+                <th scope="col" className="py-1.5 pr-3 font-normal">
+                  Recommended Action
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -124,15 +136,15 @@ export function ManagerActionQueue({ alerts }: { alerts: ManagerAlert[] }) {
                     <span className={`font-semibold ${SEVERITY_TEXT[a.severity]}`}>{SEVERITY_LABEL[a.severity]}</span>
                   </td>
                   <td className="max-w-[280px] py-1.5 pr-3 text-text">{a.issue}</td>
-                  <td className="py-1.5 pr-3 text-text-faint">{a.client ?? "—"}</td>
+                  <td className="py-1.5 pr-3 text-text-muted">{a.client ?? "—"}</td>
                   <td className="py-1.5 pr-3">
                     <Link href={a.href} className="text-accent hover:underline">
                       {a.reference}
                     </Link>
                   </td>
-                  <td className="py-1.5 pr-3 text-text-faint">{a.technician ?? "—"}</td>
-                  <td className="py-1.5 pr-3 text-text-faint">{formatAge(a.ageMinutes)}</td>
-                  <td className="py-1.5 pr-3 text-text-faint">{a.slaRisk ?? "—"}</td>
+                  <td className="py-1.5 pr-3 text-text-muted">{a.technician ?? "—"}</td>
+                  <td className="py-1.5 pr-3 text-text-muted">{formatAge(a.ageMinutes)}</td>
+                  <td className="py-1.5 pr-3 text-text-muted">{a.slaRisk ?? "—"}</td>
                   <td className="py-1.5 pr-3 text-text-muted">{a.recommendedAction}</td>
                 </tr>
               ))}

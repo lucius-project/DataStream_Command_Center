@@ -72,6 +72,8 @@ export async function getAttentionFlags() {
   });
 }
 
+const SLA_BREACH_GRACE_HOURS = 24;
+
 // One flag per (ticket, type) for the ticket's entire time in the open
 // feed — deliberately not re-created after a human resolves/snoozes it,
 // even if the same condition (still P1, still SLA-breached) persists on
@@ -79,16 +81,16 @@ export async function getAttentionFlags() {
 // me in 5 minutes". The only way a ticket's flags disappear is the
 // existing reconcileTickets() cascade when the ticket leaves the open
 // feed entirely (closed) — see lib/integrations/halopsa.ts.
-async function ensureAttentionFlag(ticketId: string, type: AttentionType, description: string): Promise<void> {
-  const existing = await prisma.attentionFlag.findFirst({ where: { ticketId, type } });
-  if (existing) return;
-  await prisma.attentionFlag.create({
-    data: { source: "TICKET", ticketId, type, description, status: "OPEN" },
-  });
-}
-
-const SLA_BREACH_GRACE_HOURS = 24;
-
+//
+// Batched, not one findFirst+create per ticket per flag type — a single
+// findMany to see what's already flagged, then one createMany for
+// whatever's missing. AttentionFlag.(ticketId, type) has a real unique
+// constraint (see schema) as the actual backstop against a race between
+// two overlapping syncs; skipDuplicates isn't used here since SQLite
+// doesn't support it in Prisma (Postgres/MySQL/Mongo only) — a genuine
+// (unlikely, single-server) race would surface as a constraint-violation
+// error on createMany instead of being silently absorbed.
+//
 // Auto-flags P1/P2 and significantly SLA-breached tickets from a live
 // HaloPSA sync. Deliberately narrower than "any open P1 or any breach" —
 // a P3/P4 ticket a few minutes past its response SLA isn't worth an
@@ -98,19 +100,41 @@ const SLA_BREACH_GRACE_HOURS = 24;
 // alert.
 export async function generateAttentionFlagsFromTickets(tickets: TicketSnapshot[]): Promise<void> {
   const now = new Date();
+  const candidates: { ticketId: string; type: AttentionType; description: string }[] = [];
+
   for (const ticket of tickets) {
     if (ticket.priority === "P1" || ticket.priority === "P2") {
-      await ensureAttentionFlag(
-        ticket.id,
-        "ESCALATION",
-        `${ticket.priority} priority ticket needs dispatch attention.`,
-      );
+      candidates.push({
+        ticketId: ticket.id,
+        type: "ESCALATION",
+        description: `${ticket.priority} priority ticket needs dispatch attention.`,
+      });
     }
     const breachHours = ticket.slaDueAt ? (now.getTime() - ticket.slaDueAt.getTime()) / (60 * 60 * 1000) : 0;
     if (breachHours > SLA_BREACH_GRACE_HOURS) {
-      await ensureAttentionFlag(ticket.id, "SLA_BREACH", "Response SLA passed more than a day ago — ticket is still open.");
+      candidates.push({
+        ticketId: ticket.id,
+        type: "SLA_BREACH",
+        description: "Response SLA passed more than a day ago — ticket is still open.",
+      });
     }
   }
+  if (candidates.length === 0) return;
+
+  const existing = await prisma.attentionFlag.findMany({
+    where: {
+      ticketId: { in: candidates.map((c) => c.ticketId) },
+      type: { in: ["ESCALATION", "SLA_BREACH"] },
+    },
+    select: { ticketId: true, type: true },
+  });
+  const existingKeys = new Set(existing.map((e) => `${e.ticketId}:${e.type}`));
+  const toCreate = candidates.filter((c) => !existingKeys.has(`${c.ticketId}:${c.type}`));
+  if (toCreate.length === 0) return;
+
+  await prisma.attentionFlag.createMany({
+    data: toCreate.map((c) => ({ source: "TICKET" as const, ...c, status: "OPEN" as const })),
+  });
 }
 
 // Current week only — once the live sync starts writing a row per week,

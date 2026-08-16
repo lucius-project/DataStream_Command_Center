@@ -8,16 +8,22 @@ export function Stat({ value, label, tone }: { value: number | string; label: st
   const toneClass = tone === "critical" ? "text-status-critical" : tone === "warn" ? "text-status-warn" : "text-text";
   return (
     <span>
-      <span className={toneClass}>{value}</span> <span className="text-text-faint">{label}</span>
+      {/* text-muted, not text-faint — this label is what makes the
+          adjacent number meaningful ("5 open" vs. just "5"), not a
+          decorative caption, and text-faint fails WCAG AA contrast. */}
+      <span className={toneClass}>{value}</span> <span className="text-text-muted">{label}</span>
     </span>
   );
 }
 
 // Small uppercase group header, matching KpiTile's label style
 // (components/business-health/KpiTile.tsx) for the same visual
-// vocabulary across pages.
+// vocabulary across pages. A real heading (not just styled text) so
+// screen-reader heading-navigation can jump between a tech card's
+// Tickets/Calls/Service/etc. sub-sections, same reasoning as promoting
+// each tech's own name to a heading in TechPerformanceRow.
 export function GroupLabel({ children }: { children: React.ReactNode }) {
-  return <div className="font-data text-[10px] tracking-wide text-text-faint uppercase">{children}</div>;
+  return <h4 className="font-data text-[10px] tracking-wide text-text-muted uppercase">{children}</h4>;
 }
 
 const STATUS_PILL_CLASS: Record<TechStatus, string> = {
@@ -43,6 +49,7 @@ export function StatusPill({ status }: { status: TechStatus }) {
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+const WEEKDAY_FULL_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
 // Flat daily timesheet threshold — all time entries (client tickets and
 // internal/non-billable ones alike; nothing filters those out in
@@ -82,6 +89,8 @@ export function DailyHoursBars({
           : hours >= DAILY_HOURS_THRESHOLD
             ? "bg-status-ok"
             : "bg-status-critical";
+        const fullLabel = WEEKDAY_FULL_LABELS[i];
+        const statusWord = isFuture ? "not yet due" : hours >= DAILY_HOURS_THRESHOLD ? "met threshold" : "below threshold";
         return (
           <div key={label} className="flex flex-col items-center gap-1" title={`${label}: ${hours}h`}>
             <div className="relative flex h-9 w-3.5 items-end overflow-hidden rounded-sm bg-panel-raised">
@@ -90,6 +99,13 @@ export function DailyHoursBars({
                 style={{ bottom: `${thresholdPct}%` }}
               />
               <div className={`w-full rounded-sm ${barClass}`} style={{ height: `${heightPct}%` }} />
+              {/* The bar's pass/fail color is otherwise the only signal —
+                  this gives screen readers (and anyone else who can't
+                  rely on the hover-only title tooltip) the same info in
+                  words, without changing anything visually. */}
+              <span className="sr-only">
+                {fullLabel}: {hours} hours — {statusWord}
+              </span>
             </div>
             <span className="font-data text-[9px] text-text-faint">{label[0]}</span>
           </div>
