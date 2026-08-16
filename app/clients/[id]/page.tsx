@@ -2,14 +2,24 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth/roleRank";
 import { getClientProfile } from "@/lib/services/companyProfile";
-import { syncClientFinancials } from "@/lib/integrations/quickbooks";
+import { syncAllClientFinancials } from "@/lib/integrations/quickbooks";
 import { syncSeatReconciliation, fetchNinjaOrganizations } from "@/lib/integrations/ninjaRmm";
 import { fetchCustomers } from "@/lib/integrations/quickbooks";
-import { rollingAverageHours } from "@/lib/services/clientProfitability";
+import { rollingAverageHours, buildAgreementBreakdown, getClientLaborTrend } from "@/lib/services/clientProfitability";
+import { getKpiSettings } from "@/lib/services/kpiSettings";
 import { LinkAccountsPanel } from "@/components/companyProfile/LinkAccountsPanel";
+import { EffectiveHourlyRateTile } from "@/components/companyProfile/EffectiveHourlyRateTile";
+import { ServiceProfitTile } from "@/components/companyProfile/ServiceProfitTile";
 
 function money(value: number): string {
   return value.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+// Per-unit agreement item prices keep cents (unlike the aggregate
+// revenue/cost/profit figures above, which round to whole dollars) — a
+// $12.50/unit item rounding to "$13" would misrepresent the real rate.
+function unitMoney(value: number): string {
+  return value.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
 export default async function CompanyProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -17,20 +27,32 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
   const { id } = await params;
 
   const [financialsSync, seatSync] = await Promise.all([
-    syncClientFinancials(id),
+    syncAllClientFinancials(),
     syncSeatReconciliation(id),
   ]);
 
-  const [client, ninjaOrganizations, quickbooksCustomers] = await Promise.all([
+  const [client, ninjaOrganizations, quickbooksCustomers, kpiSettings, laborTrend] = await Promise.all([
     getClientProfile(id),
     fetchNinjaOrganizations().catch(() => []),
     fetchCustomers().catch(() => []),
+    getKpiSettings(),
+    getClientLaborTrend(id),
   ]);
 
   if (!client) notFound();
 
   const syncErrors = [financialsSync.error, seatSync.error].filter((e): e is string => Boolean(e));
   const clientAvg = rollingAverageHours(client.monthlyHours);
+  const agreementBreakdown = buildAgreementBreakdown(client.agreementItems);
+  const agreementValue = agreementBreakdown.reduce((sum, g) => sum + g.monthlyValue, 0);
+  // Service (the managed-IT labor line) always contributes 0 here by
+  // design (its real profit is hours × rate, shown separately by the
+  // Service Profit tile below) — this is purely the resold-product
+  // categories' revenue minus their real HaloPSA catalog cost (e.g.
+  // Fortress Security, DataStream Protect).
+  const productProfit = agreementBreakdown.reduce((sum, g) => sum + g.monthlyProfit, 0);
+  const effectiveRateTrend = laborTrend.map((row) => ({ yearMonth: row.yearMonth, value: row.effectiveHourlyRate }));
+  const serviceProfitTrend = laborTrend.map((row) => ({ yearMonth: row.yearMonth, value: row.laborProfit }));
 
   return (
     <div className="mx-auto max-w-2xl p-4 md:p-6">
@@ -61,6 +83,79 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
 
       <div className="mt-6 flex flex-col gap-4">
         <div>
+          <div className="font-display text-sm font-medium text-text">IT Service Agreement</div>
+          {agreementBreakdown.length > 0 ? (
+            <div className="mt-2 flex flex-col gap-2">
+              {agreementBreakdown.map((group) => {
+                const isServiceCategory = group.category === "Service";
+                const showProfit = !isServiceCategory && group.monthlyValue > 0 && !group.hasUnknownCost;
+                return (
+                  <div key={group.category} className="rounded-lg border border-border bg-panel p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-data text-xs font-medium tracking-wide text-text-muted uppercase">
+                        {group.category}
+                      </span>
+                      <span className="flex items-center gap-1 font-data text-xs">
+                        {group.monthlyValue > 0 && <span className="text-text">{unitMoney(group.monthlyValue)}/mo</span>}
+                        {showProfit && (
+                          <span className={group.monthlyProfit >= 0 ? "text-status-ok" : "text-status-critical"}>
+                            · {unitMoney(group.monthlyProfit)} profit
+                          </span>
+                        )}
+                        {!isServiceCategory && group.hasUnknownCost && <span className="text-text-faint">· cost unknown</span>}
+                        {group.hasUnpricedItems && (
+                          <span className="text-text-faint">{group.monthlyValue > 0 ? "· some unpriced" : "no pricing synced"}</span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-col gap-1">
+                      {group.items.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between gap-2 font-data text-[11px] text-text-muted">
+                          <span className="min-w-0 truncate">
+                            {item.name}
+                            {item.quantity !== 1 ? ` ×${item.quantity}` : ""}
+                          </span>
+                          <span className="shrink-0 text-text-faint">
+                            {item.unitPrice !== null ? `${unitMoney(item.unitPrice)}/unit` : "—"}
+                            {!isServiceCategory && item.unitPrice !== null && item.unitCost !== null && ` (cost ${unitMoney(item.unitCost)})`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between rounded-lg border border-border-strong bg-panel-raised px-3 py-2">
+                <span className="font-data text-xs font-medium text-text">Agreement value</span>
+                <span className="font-display text-sm font-semibold text-text">{unitMoney(agreementValue)}/mo</span>
+              </div>
+              {productProfit !== 0 && (
+                <div className="flex items-center justify-between rounded-lg border border-border-strong bg-panel-raised px-3 py-2">
+                  <span className="font-data text-xs font-medium text-text">
+                    Product profit <span className="text-text-faint">(resold categories)</span>
+                  </span>
+                  <span
+                    className={`font-display text-sm font-semibold ${productProfit >= 0 ? "text-status-ok" : "text-status-critical"}`}
+                  >
+                    {unitMoney(productProfit)}/mo
+                  </span>
+                </div>
+              )}
+              {laborTrend.length > 0 && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <EffectiveHourlyRateTile trend={effectiveRateTrend} />
+                  <ServiceProfitTile trend={serviceProfitTrend} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mt-2 rounded-lg border border-border bg-panel p-4 text-center text-sm text-text-muted">
+              No agreement items synced yet.
+            </div>
+          )}
+        </div>
+
+        <div>
           <div className="font-display text-sm font-medium text-text">Financials</div>
           {client.financials ? (
             <div className="mt-2 grid grid-cols-2 gap-3 rounded-lg border border-border bg-panel p-4 sm:grid-cols-4">
@@ -74,7 +169,11 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
                 <div className="font-display text-lg font-semibold text-text">
                   {money(client.financials.laborCost)}
                 </div>
-                <div className="font-data text-[11px] text-text-faint">labor cost (blended rate)</div>
+                <div className="font-data text-[11px] text-text-faint">
+                  {kpiSettings.laborHourlyRate > 0
+                    ? `service cost (${unitMoney(kpiSettings.laborHourlyRate)}/hr × ${client.hoursThisMonth}h)`
+                    : "service cost (rate not set — see Admin Settings)"}
+                </div>
               </div>
               <div>
                 <div className="font-display text-lg font-semibold text-text">
@@ -95,7 +194,7 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
             <div className="mt-2 rounded-lg border border-border bg-panel p-4 text-center text-sm text-text-muted">
               {client.quickbooksCustomerId
                 ? "No QuickBooks data synced yet."
-                : "Link a QuickBooks customer below to see revenue, labor cost, and profit."}
+                : "Link a QuickBooks customer below to see revenue, service cost, and profit."}
             </div>
           )}
         </div>
@@ -129,26 +228,6 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
             </div>
           )}
         </div>
-
-        {client.agreementItems.length > 0 && (
-          <div>
-            <div className="font-display text-sm font-medium text-text">Agreement items</div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {client.agreementItems.map((item) => (
-                <span
-                  key={item.id}
-                  className="flex items-center gap-1.5 rounded border border-border-strong bg-panel-raised px-2 py-1 font-data text-[11px] text-text-muted"
-                >
-                  {item.name}
-                  {item.quantity !== 1 ? ` ×${item.quantity}` : ""}
-                  {item.contractType && (
-                    <span className="rounded-sm bg-panel px-1 py-0.5 text-text-faint">{item.contractType}</span>
-                  )}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
 
         <LinkAccountsPanel
           clientId={client.id}
