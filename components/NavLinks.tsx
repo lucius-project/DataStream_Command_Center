@@ -22,10 +22,21 @@ export function NavLinks({ role, onNavigate }: { role: AppRole; onNavigate?: () 
     return !item.minRole || isAtLeast(role as RankedRole | "SDR", item.minRole);
   });
 
-  // All expanded by default — a group only ever hides items behind a
-  // click once the user collapses it themselves, so nothing that used
-  // to be one click away becomes two on first load.
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Minimized by default — every group starts collapsed behind its own
+  // header, sub-items appearing only once you click it, except whichever
+  // group contains the page you're currently on (so the sidebar never
+  // opens with no visible indication of where you are, and today's page
+  // is always still one look away, not one click away). Computed once at
+  // mount from the initial pathname, not kept in sync on every
+  // client-side navigation after that — this is a starting default, not
+  // a "always auto-expand my current section" rule that would fight a
+  // group the user deliberately collapsed.
+  const activeGroup = visibleItems.find(
+    (item) => pathname === item.href || pathname.startsWith(item.href + "/"),
+  )?.group;
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => new Set(NAV_GROUPS.filter((g) => g !== activeGroup)),
+  );
 
   function toggleGroup(group: string) {
     setCollapsed((prev) => {
