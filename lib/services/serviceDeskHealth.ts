@@ -215,7 +215,7 @@ function workloadScore(net: NetTicketChange, aging: TechActionableAging): number
   return Math.max(0, Math.round(score));
 }
 
-function computeHealthScore(
+export function computeHealthScore(
   responseSla: SlaMetric,
   resolutionSla: SlaMetric,
   net: NetTicketChange,
@@ -277,7 +277,13 @@ function computeHealthScore(
     detail: c.detail,
   }));
 
-  if (available.length === 0) return { score: null, categories };
+  // baseWeightSum === 0 means every available category was configured
+  // with 0 weight (e.g. an admin put 100% of the weight group onto a
+  // category that happens to be unavailable today) — every weightPct
+  // above resolves to 0, and summing would silently produce a fabricated
+  // 0/100 that reads as "everything is failing" instead of "no real
+  // signal contributed." Treat that the same as no data at all.
+  if (available.length === 0 || baseWeightSum === 0) return { score: null, categories };
 
   const score = Math.round(
     categories.reduce((sum, c) => sum + (c.score !== null ? (c.score * c.weightPct) / 100 : 0), 0),
@@ -287,6 +293,13 @@ function computeHealthScore(
 }
 
 export async function getServiceDeskHealthSnapshot(): Promise<ServiceDeskHealthSnapshot> {
+  // Silently degrading here (rather than threading an error through this
+  // snapshot's own return type) is deliberate, not an oversight: every
+  // current caller (app/tech-performance/page.tsx, huddle/page.tsx,
+  // coaching-drafts/route.ts) already does its own getContactDirectory()
+  // call and surfaces that failure to the user — this second, redundant
+  // fetch (cheap; getContactDirectory is itself throttle-cached) would
+  // just report the same failure twice.
   const directory = await getContactDirectory().catch(() => null);
 
   const [netTicketChange, responseSla, resolutionSla, backlog, aging, staleTickets, callSummary, settings] = await Promise.all([
@@ -393,6 +406,185 @@ export async function getServiceDeskHealthTrend(): Promise<ServiceDeskHealthTren
   return { days };
 }
 
+export type TicketTrendDay = {
+  date: string; // "YYYY-MM-DD", sortable as a string
+  label: string; // "Aug 12"
+  // null (not 0) when no ServiceDeskHealthDaily row exists for that day —
+  // same "missing row isn't the same claim as zero tickets" honesty rule
+  // getServiceDeskHealthTrend already follows for healthScore. Within an
+  // existing row these three are always real numbers (see that model's
+  // schema — ticketsCreated/ticketsClosed/netChange are non-nullable),
+  // so the null-ness lives at the day level, not the field level.
+  created: number | null;
+  closed: number | null;
+  net: number | null;
+};
+
+export type TicketTrend = {
+  days: TicketTrendDay[]; // oldest first, HEALTH_TREND_DAYS fixed entries (today last)
+};
+
+// Same fixed-window, DB-only shape as getServiceDeskHealthTrend, reusing
+// its date-window constants/helpers — this is the "Ticket Trend" widget
+// (created vs. closed per day), not a second, differently-scoped trend
+// window.
+export async function getTicketTrend(): Promise<TicketTrend> {
+  const today = startOfToday();
+  const windowStart = new Date(today);
+  windowStart.setDate(windowStart.getDate() - (HEALTH_TREND_DAYS - 1));
+
+  const rows = await prisma.serviceDeskHealthDaily.findMany({
+    where: { date: { gte: windowStart, lte: today } },
+    select: { date: true, ticketsCreated: true, ticketsClosed: true, netChange: true },
+  });
+  const rowByDate = new Map(rows.map((r) => [dateKey(r.date), r]));
+
+  const days: TicketTrendDay[] = [];
+  for (let i = 0; i < HEALTH_TREND_DAYS; i++) {
+    const d = new Date(windowStart);
+    d.setDate(d.getDate() + i);
+    const key = dateKey(d);
+    const row = rowByDate.get(key);
+    days.push({
+      date: key,
+      label: TREND_DAY_LABEL.format(d),
+      created: row?.ticketsCreated ?? null,
+      closed: row?.ticketsClosed ?? null,
+      net: row?.netChange ?? null,
+    });
+  }
+
+  return { days };
+}
+
+export type TicketTrend30DayTotal = {
+  created: number;
+  closed: number;
+  net: number;
+  label: NetTicketChange["label"];
+  // Out of HEALTH_TREND_DAYS (30) — this table is never backfilled (see
+  // its schema comment), so a fresh install or one with gaps (days
+  // nobody loaded the page) has fewer than 30 real days behind this
+  // total. Callers should label it "last N days," not always "30 days,"
+  // same honesty rule as everywhere else this table is read.
+  daysWithData: number;
+};
+
+// Rolling 30-day aggregate for the Ticket Trend tile's headline — a
+// single DB-level sum, not a fetch-then-reduce over getTicketTrend's own
+// day-by-day array, since the tile only needs the totals, not the daily
+// shape (that's what the trend pop-out is for).
+export async function getTicketTrend30DayTotal(): Promise<TicketTrend30DayTotal> {
+  const today = startOfToday();
+  const windowStart = new Date(today);
+  windowStart.setDate(windowStart.getDate() - (HEALTH_TREND_DAYS - 1));
+
+  const result = await prisma.serviceDeskHealthDaily.aggregate({
+    where: { date: { gte: windowStart, lte: today } },
+    _sum: { ticketsCreated: true, ticketsClosed: true, netChange: true },
+    _count: { _all: true },
+  });
+
+  const created = result._sum.ticketsCreated ?? 0;
+  const closed = result._sum.ticketsClosed ?? 0;
+  const net = result._sum.netChange ?? 0;
+
+  return { created, closed, net, label: netTicketChangeLabel(net), daysWithData: result._count._all };
+}
+
+export type ResponseSlaTrendDay = {
+  date: string; // "YYYY-MM-DD", sortable as a string
+  label: string; // "Aug 12"
+  // null (not 0) when no ServiceDeskHealthDaily row exists for that day,
+  // same honesty rule as every other trend in this file — a day before
+  // this table started being written isn't the same claim as "0%".
+  pct: number | null;
+};
+
+export type ResponseSlaTrend = {
+  days: ResponseSlaTrendDay[]; // oldest first, HEALTH_TREND_DAYS fixed entries (today last)
+  // Live, admin-editable bands (KpiSettings.responseSlaGreenPct/YellowPct)
+  // — the same thresholds the live Response SLA tile/KPI already use, so
+  // a bar's color here means the same thing it does everywhere else this
+  // metric appears, not a second, independently-tuned scale.
+  greenPct: number;
+  yellowPct: number;
+};
+
+// Same fixed-window, DB-only shape as getServiceDeskHealthTrend/
+// getTicketTrend, reusing their date-window constants/helpers.
+export async function getResponseSlaTrend(): Promise<ResponseSlaTrend> {
+  const today = startOfToday();
+  const windowStart = new Date(today);
+  windowStart.setDate(windowStart.getDate() - (HEALTH_TREND_DAYS - 1));
+
+  const [rows, settings] = await Promise.all([
+    prisma.serviceDeskHealthDaily.findMany({
+      where: { date: { gte: windowStart, lte: today } },
+      select: { date: true, responseSlaPct: true },
+    }),
+    getKpiSettings(),
+  ]);
+  const pctByDate = new Map(rows.map((r) => [dateKey(r.date), r.responseSlaPct]));
+
+  const days: ResponseSlaTrendDay[] = [];
+  for (let i = 0; i < HEALTH_TREND_DAYS; i++) {
+    const d = new Date(windowStart);
+    d.setDate(d.getDate() + i);
+    const key = dateKey(d);
+    days.push({ date: key, label: TREND_DAY_LABEL.format(d), pct: pctByDate.get(key) ?? null });
+  }
+
+  return { days, greenPct: settings.responseSlaGreenPct, yellowPct: settings.responseSlaYellowPct };
+}
+
+// Morning Brief's own executive-facing band for Phone Answer (yesterday)
+// — 99-100 green, 97-98 yellow, 96-or-below red. Lives here (not
+// KpiSettings) and is exported for morningBrief.ts and the trend below
+// to share, rather than each hardcoding its own copy: intentionally NOT
+// KpiSettings.answerRateGreenPct/YellowPct, which drives the live "Call
+// Answer Rate" KPI tile and is admin-editable — this is a stricter,
+// fixed bar that must not move if that setting is retuned.
+export const PHONE_ANSWER_GREEN_PCT = 99;
+export const PHONE_ANSWER_YELLOW_PCT = 97;
+
+export type PhoneAnswerTrendDay = {
+  date: string; // "YYYY-MM-DD", sortable as a string
+  label: string; // "Aug 12"
+  pct: number | null; // null (not 0) when no row exists for that day
+};
+
+export type PhoneAnswerTrend = {
+  days: PhoneAnswerTrendDay[]; // oldest first, HEALTH_TREND_DAYS fixed entries (today last)
+  greenPct: number;
+  yellowPct: number;
+};
+
+// Same fixed-window, DB-only shape as the other trends in this file.
+// Fixed thresholds (not a KpiSettings lookup) — see
+// PHONE_ANSWER_GREEN_PCT/YELLOW_PCT above for why.
+export async function getPhoneAnswerTrend(): Promise<PhoneAnswerTrend> {
+  const today = startOfToday();
+  const windowStart = new Date(today);
+  windowStart.setDate(windowStart.getDate() - (HEALTH_TREND_DAYS - 1));
+
+  const rows = await prisma.serviceDeskHealthDaily.findMany({
+    where: { date: { gte: windowStart, lte: today } },
+    select: { date: true, phoneAnswerRatePct: true },
+  });
+  const pctByDate = new Map(rows.map((r) => [dateKey(r.date), r.phoneAnswerRatePct]));
+
+  const days: PhoneAnswerTrendDay[] = [];
+  for (let i = 0; i < HEALTH_TREND_DAYS; i++) {
+    const d = new Date(windowStart);
+    d.setDate(d.getDate() + i);
+    const key = dateKey(d);
+    days.push({ date: key, label: TREND_DAY_LABEL.format(d), pct: pctByDate.get(key) ?? null });
+  }
+
+  return { days, greenPct: PHONE_ANSWER_GREEN_PCT, yellowPct: PHONE_ANSWER_YELLOW_PCT };
+}
+
 function categoryScore(healthScore: HealthScoreResult, key: HealthScoreCategory["key"]): number | null {
   return healthScore.categories.find((c) => c.key === key)?.score ?? null;
 }
@@ -490,6 +682,12 @@ export type SlaAtRiskTicket = {
   summary: string;
   priority: TicketPriority;
   assignedTech: string;
+  // Threaded through so callers can exclude project-tracking tickets
+  // (PROJECT_TICKET_TYPE_IDS, halopsa.ts) themselves — e.g. managerAlerts.ts's
+  // slaApproachingBreach — without this function's own query changing for
+  // its other consumer (the standalone SLA At Risk section), which still
+  // shows every ticket type.
+  ticketTypeId: number | null;
   slaType: "response" | "resolution";
   dueAt: Date;
   // Negative = already past due. respondByAt/fixByAt are HaloPSA's own
@@ -536,6 +734,7 @@ export async function getSlaAtRiskTickets(): Promise<SlaAtRiskTicket[]> {
         summary: t.summary,
         priority: t.priority,
         assignedTech: t.assignedTech,
+        ticketTypeId: t.ticketTypeId,
         slaType: "response",
         dueAt: t.respondByAt,
         minutesRemaining: Math.round((t.respondByAt.getTime() - now.getTime()) / 60000),
@@ -549,6 +748,7 @@ export async function getSlaAtRiskTickets(): Promise<SlaAtRiskTicket[]> {
         summary: t.summary,
         priority: t.priority,
         assignedTech: t.assignedTech,
+        ticketTypeId: t.ticketTypeId,
         slaType: "resolution",
         dueAt: t.fixByAt,
         minutesRemaining: Math.round((t.fixByAt.getTime() - now.getTime()) / 60000),

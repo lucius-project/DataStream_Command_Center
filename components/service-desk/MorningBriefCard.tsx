@@ -1,26 +1,11 @@
 import Link from "next/link";
 import type { MorningBrief } from "@/lib/services/morningBrief";
-import { LABEL_TEXT_CLASS } from "./NetTicketChangeTile";
-import { STATUS_TEXT } from "@/lib/kpiStatus";
 import { InfoButton } from "@/components/shared/InfoButton";
 import { MorningBriefHealthTile } from "./MorningBriefHealthTile";
-
-// A row of equal-size tiles, same visual language as KpiTile.tsx (label
-// on top, big number, one line of subtext) — every data point gets the
-// same footprint regardless of how much text it has, instead of the old
-// flex-wrap row where a short "94%" sat next to a much longer "Yesterday:
-// 12 created · 9 closed · net -3 · Gaining Ground" sentence. shrink-0
-// value class keeps a null "—" from making that particular tile any
-// shorter than its neighbors.
-function BriefTile({ label, value, valueClassName, sub }: { label: string; value: string; valueClassName?: string; sub?: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1 rounded-md border border-border bg-panel-raised p-3 text-center">
-      <span className="font-data text-[10px] tracking-wide text-text-faint uppercase">{label}</span>
-      <span className={`shrink-0 font-display text-xl font-semibold ${valueClassName ?? "text-text"}`}>{value}</span>
-      {sub && <span className="font-data text-[10px] text-text-faint">{sub}</span>}
-    </div>
-  );
-}
+import { MorningBriefTicketTrendTile } from "./MorningBriefTicketTrendTile";
+import { MorningBriefResponseSlaTile } from "./MorningBriefResponseSlaTile";
+import { MorningBriefPhoneAnswerTile } from "./MorningBriefPhoneAnswerTile";
+import { MorningBriefAttentionTile } from "./MorningBriefAttentionTile";
 
 // Compact, read-in-five-seconds summary at the very top of the page —
 // deterministic, no chart, based on the master spec's own worked example
@@ -33,7 +18,15 @@ function BriefTile({ label, value, valueClassName, sub }: { label: string; value
 // off of, not a separate view. See morningBrief.ts for why every field
 // here is a plain reshaping of data already computed elsewhere on this
 // page, never a new calculation.
-export function MorningBriefCard({ brief, huddleActive = false }: { brief: MorningBrief; huddleActive?: boolean }) {
+export function MorningBriefCard({
+  brief,
+  knownTechs,
+  huddleActive = false,
+}: {
+  brief: MorningBrief;
+  knownTechs: readonly string[];
+  huddleActive?: boolean;
+}) {
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex items-center justify-between gap-2">
@@ -42,8 +35,8 @@ export function MorningBriefCard({ brief, huddleActive = false }: { brief: Morni
           <InfoButton
             title="Morning Brief"
             what="A five-second summary at the top of the page — every figure here is a plain reshaping of numbers computed elsewhere (Service Desk Health, Manager Alerts, Coaching Insights), never a new or separately-calculated number."
-            meaning="Service health is today's live composite score. Yesterday's created/closed/net comes from the last time this page was loaded on that day (no background job — a day nobody opened the page has no row). Response SLA is today's live figure; Phone Answer is deliberately yesterday's, since 'how did phones go yesterday' is a different, more complete question than a still-in-progress today."
-            calculation="Attention count is the size of the same sorted Manager Alerts list Needs Attention and the Manager Action Queue show below — scroll down for the full list rather than singling one out here. Positive Highlight is the first positive-tone Coaching Insight, if any exist yet."
+            meaning="Service health is today's live composite score, with a 30-day pop-out. Ticket Trend shows the rolling 30-day created/closed/net total (built from a daily snapshot taken each time this page loads — no background job, so a day nobody opened the page leaves a gap, and the total honestly shows fewer days until 30 real days accumulate), with a daily pop-out for the day-by-day pattern. Response SLA is today's live figure, also with a 30-day pop-out. Phone Answer is deliberately yesterday's, since 'how did phones go yesterday' is a different, more complete question than a still-in-progress today — its own 30-day pop-out uses a fixed executive threshold (99/97), not the admin-editable Call Answer Rate setting."
+            calculation="Needs Attention is the same sorted Manager Alerts list as the full Needs Attention section and Manager Action Queue below — click the tile for the list right here, or scroll down for the same thing in place. Positive Highlight is the first positive-tone Coaching Insight, if any exist yet."
           />
         </span>
         {/* A real navigation link styled as a switch, not a JS-driven
@@ -74,30 +67,13 @@ export function MorningBriefCard({ brief, huddleActive = false }: { brief: Morni
       <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <MorningBriefHealthTile result={brief.healthScore} />
 
-        <BriefTile
-          label="Yesterday"
-          value={brief.yesterday ? `${brief.yesterday.net >= 0 ? "+" : ""}${brief.yesterday.net}` : "—"}
-          valueClassName={brief.yesterday ? LABEL_TEXT_CLASS[brief.yesterday.label] : "text-text-faint"}
-          sub={brief.yesterday ? `${brief.yesterday.created} created · ${brief.yesterday.closed} closed` : "No data recorded"}
-        />
+        <MorningBriefTicketTrendTile ticketTrend={brief.ticketTrend} />
 
-        <BriefTile
-          label="Response SLA"
-          value={brief.responseSlaPct !== null ? `${Math.round(brief.responseSlaPct)}%` : "—"}
-          valueClassName={brief.responseSlaPct !== null ? STATUS_TEXT[brief.responseSlaStatus] : undefined}
-        />
+        <MorningBriefResponseSlaTile pct={brief.responseSlaPct} status={brief.responseSlaStatus} />
 
-        <BriefTile
-          label="Phone Answer (yesterday)"
-          value={brief.phoneAnswerRatePct !== null ? `${Math.round(brief.phoneAnswerRatePct)}%` : "—"}
-          valueClassName={brief.phoneAnswerRatePct !== null ? STATUS_TEXT[brief.phoneAnswerRateStatus] : undefined}
-        />
+        <MorningBriefPhoneAnswerTile pct={brief.phoneAnswerRatePct} status={brief.phoneAnswerRateStatus} />
 
-        <BriefTile
-          label="Needs Attention"
-          value={`${brief.attentionCount}`}
-          sub={`item${brief.attentionCount === 1 ? "" : "s"}`}
-        />
+        <MorningBriefAttentionTile alerts={brief.alerts} knownTechs={knownTechs} />
       </div>
 
       {brief.positiveHighlight && (
