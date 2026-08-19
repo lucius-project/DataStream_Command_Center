@@ -16,6 +16,7 @@ import type { TimelineEntry } from "@/lib/services/activityCorrelation";
 import type { KpiTrend } from "@/lib/services/businessHealth";
 import { Stat, GroupLabel, StatusPill, DailyHoursBars } from "./shared";
 import { DrilldownStat } from "./DrilldownStat";
+import { TechStatIconButton } from "./TechStatIconButton";
 import { TechScoreBadge } from "./TechScoreBadge";
 import { ActivityTimelineModal } from "./ActivityTimelineModal";
 import { GenerateTechEmailButton } from "./GenerateTechEmailButton";
@@ -158,6 +159,7 @@ export function TechPerformanceRow({
   timelineEntries: TimelineEntry[];
 }) {
   const sev = paceSeverity(tech.pacePct);
+  const clientSev = tech.chargeablePct !== null ? paceSeverity(tech.chargeablePct) : "ok";
   const { priorityCounts } = cardData;
 
   return (
@@ -202,6 +204,38 @@ export function TechPerformanceRow({
         </div>
       </div>
 
+      <div className="mt-2 flex items-end justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <GroupLabel>Client Hours</GroupLabel>
+          {tech.chargeableHours === null ? (
+            <div className="mt-0.5 font-data text-xs text-text-faint">
+              Not synced yet this week — HaloPSA&apos;s chargeable-hours tracking.
+            </div>
+          ) : (
+            <>
+              <div className="mt-0.5 flex items-baseline gap-2">
+                <span className={`font-display text-2xl font-semibold ${SEVERITY_TEXT[clientSev]}`}>
+                  {Math.round(tech.chargeablePct ?? 0)}%
+                </span>
+                <span className={`font-data text-[10px] font-semibold tracking-wide ${SEVERITY_TEXT[clientSev]}`}>
+                  {paceLabel(tech.chargeablePct ?? 0)}
+                </span>
+                <span className="font-data text-xs text-text-faint">
+                  {tech.chargeableHours}h client · {tech.chargeableHoursToDate}h expected to date ·{" "}
+                  {tech.internalHours}h internal/admin (of {tech.expectedChargeableHours}h/wk target)
+                </span>
+              </div>
+              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-panel-raised">
+                <div
+                  className={`h-full rounded-full ${SEVERITY_FILL[clientSev]}`}
+                  style={{ width: `${Math.min(100, tech.chargeablePct ?? 0)}%` }}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
       {tech.flag && (
         <div className={`mt-2 flex items-center gap-1.5 font-data text-xs ${SEVERITY_TEXT[sev]}`}>
           <AlertTriangle size={13} />
@@ -211,10 +245,20 @@ export function TechPerformanceRow({
 
       <DailyHoursBars dailyHours={tech.dailyHours} todayIndex={todayIndex} indent={false} />
 
-      <div className="mt-3 grid grid-cols-2 gap-4 border-t border-border pt-3">
-        <div>
-          <GroupLabel>Tickets</GroupLabel>
-          <div className="mt-1 flex flex-col gap-0.5 font-data text-[11px]">
+      {/* Four category tiles instead of always-expanded sections — the
+          primary number stays glanceable, the full DrilldownStat/Stat
+          breakdown for that category only renders once clicked (see
+          TechStatIconButton). */}
+      <div className="mt-3 flex gap-2 border-t border-border pt-3">
+        <TechStatIconButton
+          category="tickets"
+          label="Tickets"
+          value={cardData.openCount}
+          tone={priorityCounts.P1 > 0 ? "critical" : cardData.agingCount > 0 ? "warn" : undefined}
+          title={`${tech.person} — Tickets`}
+          subtitle={`${cardData.openCount} open`}
+        >
+          <div className="flex flex-col gap-0.5 font-data text-[11px]">
             <span className="flex flex-wrap gap-x-2.5">
               <DrilldownStat
                 value={cardData.openCount}
@@ -273,10 +317,16 @@ export function TechPerformanceRow({
               </span>
             </span>
           </div>
-        </div>
-        <div>
-          <GroupLabel>Calls</GroupLabel>
-          <div className="mt-1 flex flex-col gap-0.5 font-data text-[11px]">
+        </TechStatIconButton>
+
+        <TechStatIconButton
+          category="phone"
+          label="Phone"
+          value={tech.callsInbound + tech.callsOutbound}
+          title={`${tech.person} — Phone`}
+          subtitle={`${tech.callsAnswered} answered`}
+        >
+          <div className="flex flex-col gap-0.5 font-data text-[11px]">
             <span className="flex flex-wrap gap-x-2.5">
               <Stat value={tech.callsInbound} label="in" />
               <Stat value={tech.callsOutbound} label="out" />
@@ -295,13 +345,16 @@ export function TechPerformanceRow({
               />
             </span>
           </div>
-        </div>
-      </div>
+        </TechStatIconButton>
 
-      <div className="mt-3 grid grid-cols-2 gap-4 border-t border-border pt-3">
-        <div>
-          <GroupLabel>Service</GroupLabel>
-          <div className="mt-1 flex flex-col gap-1 font-data text-[11px]">
+        <TechStatIconButton
+          category="service"
+          label="Service"
+          value={slaDisplay(serviceMetrics.responseSla)}
+          tone={slaTone(serviceMetrics.responseSla)}
+          title={`${tech.person} — Service`}
+        >
+          <div className="flex flex-col gap-1 font-data text-[11px]">
             <DrilldownStat
               value={slaDisplay(serviceMetrics.responseSla)}
               label="response SLA"
@@ -323,8 +376,15 @@ export function TechPerformanceRow({
               label="median first response"
             />
           </div>
-        </div>
-        <div>
+        </TechStatIconButton>
+
+        <TechStatIconButton
+          category="remote"
+          label="Remote"
+          value={remote.sessions}
+          tone={remote.failedSessions > 0 ? "warn" : undefined}
+          title={`${tech.person} — Remote Access`}
+        >
           <div>
             <GroupLabel>Remote Support</GroupLabel>
             <div className="mt-1 flex flex-col gap-0.5 font-data text-[11px]">
@@ -377,7 +437,7 @@ export function TechPerformanceRow({
               />
             </div>
           </div>
-        </div>
+        </TechStatIconButton>
       </div>
 
       <details className="mt-3 border-t border-border pt-2 [&_summary::-webkit-details-marker]:hidden">

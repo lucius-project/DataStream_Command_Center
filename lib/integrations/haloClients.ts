@@ -232,15 +232,27 @@ export async function syncClientProfitability(): Promise<{ synced: number; error
       const name = firstString(raw, ["name", "client_name"]) || "(unnamed client)";
       liveClientIds.push(haloClientId);
 
-      const client = await prisma.client.upsert({
-        where: { haloClientId },
-        update: { name, hoursThisMonth: hoursByClient.get(haloClientId) ?? 0 },
-        create: { haloClientId, name, hoursThisMonth: hoursByClient.get(haloClientId) ?? 0 },
-      });
-
       const itemsForClient = rawContracts.filter(
         (c) => firstString(c, ["client_id", "clientid"]) === haloClientId,
       );
+      // Managed vs. Co-Managed vs. Break Fix — from the contract's own
+      // ref text (confirmed live: "FMI Co-Managed Agreement" is the only
+      // one on this instance that says so; everything else is either a
+      // plain "[X] Managed Services Agreement" or no contract at all).
+      // Computed from itemsForClient specifically (not AgreementItem),
+      // since a client with real priced line items no longer carries
+      // its own contract's ref string on any row — see
+      // Client.serviceModel's schema comment.
+      const isCoManaged = itemsForClient.some((c) => /co-?managed/i.test(firstString(c, ["ref", "refextra"]) ?? ""));
+      const serviceModel: "MANAGED" | "CO_MANAGED" | "BREAK_FIX" =
+        itemsForClient.length === 0 ? "BREAK_FIX" : isCoManaged ? "CO_MANAGED" : "MANAGED";
+
+      const client = await prisma.client.upsert({
+        where: { haloClientId },
+        update: { name, hoursThisMonth: hoursByClient.get(haloClientId) ?? 0, serviceModel },
+        create: { haloClientId, name, hoursThisMonth: hoursByClient.get(haloClientId) ?? 0, serviceModel },
+      });
+
       const primaryContractType =
         itemsForClient.length > 0 ? (firstString(itemsForClient[0], ["contracttype_name"]) ?? null) : null;
       const clientRecurringInvoices = recurringInvoicesByHaloClientId.get(haloClientId) ?? [];

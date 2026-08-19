@@ -23,8 +23,10 @@ import {
   fetchHaloAgentNames,
   fetchHaloStatusNames,
   fetchHaloTimesheet,
+  fetchHaloTicketById,
   matchKnownTech,
   withComputeThrottle,
+  mapWithConcurrency,
   HOURS_THROTTLE_MS,
   type RawHaloRecord,
 } from "./haloShared";
@@ -248,14 +250,42 @@ function mapHaloPriority(raw: RawHaloRecord): TicketPriority {
 // path (syncMockTickets never calls this), so Created/Closed/Resolution
 // SLA correctly read "unavailable" rather than fabricated until a real
 // HaloPSA connection exists.
-async function reconcileTickets(liveHaloTicketIds: string[]): Promise<void> {
+async function reconcileTickets(instanceUrl: string, accessToken: string, liveHaloTicketIds: string[]): Promise<void> {
   const stale = await prisma.ticketSnapshot.findMany({
     where: { haloTicketId: { notIn: liveHaloTicketIds } },
   });
   if (stale.length === 0) return;
 
   const closedAt = new Date();
+
+  // A ticket leaves the open feed either because it genuinely closed, or
+  // because it was deleted (or merged — still not distinguished, see
+  // TicketCloseLog's schema comment) — open_only=true can't tell those
+  // apart on its own. Confirmed live: 34% of what this used to log as
+  // "closed" over a 30-day window were actually deleted noise tickets
+  // (device-offline alerts, UPS battery pings, bounced mail, etc.),
+  // inflating Ticket Trend/Net Change/Resolution SLA. This confirms each
+  // stale ticket individually via fetchHaloTicketById before deciding
+  // whether it belongs in TicketCloseLog. Small, bounded fan-out — only
+  // tickets that actually left the feed since the last sync, not the
+  // whole backlog — same concurrency-limiting pattern as the Actions
+  // fan-outs elsewhere. A lookup that errors (network/auth hiccup, not a
+  // confirmed 404/deleted) falls back to the old "assume closed"
+  // behavior for that one ticket rather than silently dropping it —
+  // unconfirmed is closer to "probably closed" than "definitely deleted."
+  const deletedById = new Map<string, boolean>(
+    await mapWithConcurrency(stale, 5, async (t): Promise<[string, boolean]> => {
+      try {
+        const record = await fetchHaloTicketById(instanceUrl, accessToken, t.haloTicketId);
+        return [t.haloTicketId, record === null || record.deleted === true];
+      } catch {
+        return [t.haloTicketId, false];
+      }
+    }),
+  );
+
   for (const t of stale) {
+    if (deletedById.get(t.haloTicketId)) continue; // deleted, not closed — no TicketCloseLog entry
     await prisma.ticketCloseLog.upsert({
       where: { haloTicketId: t.haloTicketId },
       update: {
@@ -286,6 +316,9 @@ async function reconcileTickets(liveHaloTicketIds: string[]): Promise<void> {
     });
   }
 
+  // Deleted tickets still leave TicketSnapshot/AttentionFlag — they're
+  // gone from HaloPSA's open feed either way, just not counted as a
+  // "close" — so this cleanup stays unconditional for every stale ticket.
   const staleIds = stale.map((t) => t.id);
   await prisma.attentionFlag.deleteMany({ where: { ticketId: { in: staleIds } } });
   await prisma.ticketSnapshot.deleteMany({ where: { id: { in: staleIds } } });
@@ -397,7 +430,12 @@ async function syncLiveTickets(credential: {
     });
   }
 
-  await reconcileTickets(liveHaloTicketIds);
+  // Separate withHaloAuthRetry call (rather than reusing the token from
+  // the batch above) since that token was scoped to that callback and
+  // reconcileTickets' own per-ticket lookups need one in scope here.
+  await withHaloAuthRetry(credential.instanceUrl, credential.clientId, clientSecret, (accessToken) =>
+    reconcileTickets(credential.instanceUrl, accessToken, liveHaloTicketIds),
+  );
 
   const openTickets = await prisma.ticketSnapshot.findMany({
     where: { haloTicketId: { in: liveHaloTicketIds } },
@@ -448,6 +486,11 @@ type WeeklyHours = {
   weekly: Map<Tech, number>;
   // tech -> ISO day key -> hours, Monday-Friday only.
   daily: Map<Tech, Map<string, number>>;
+  // Client-chargeable portion of weekly, from HaloPSA's own
+  // Timesheet.chargeable_hours field — see its own comment below for why
+  // this is trustworthy despite occasionally exceeding actual_hours on a
+  // single day.
+  chargeableWeekly: Map<Tech, number>;
 };
 
 // Sums HaloPSA's own Timesheet rows (actual_hours) by agent name, matched
@@ -470,6 +513,7 @@ async function computeWeeklyHoursByTech(
 
   const rawHoursByTech = new Map<Tech, number>();
   const rawDailyByTech = new Map<Tech, Map<string, number>>();
+  const rawChargeableByTech = new Map<Tech, number>();
 
   for (const raw of rows) {
     // mapHaloDateOnly, not mapHaloDate — see its comment in haloShared.ts.
@@ -481,18 +525,31 @@ async function computeWeeklyHoursByTech(
     if (!date || date < weekStart || date > weekEnd) continue;
 
     const agentName = firstString(raw, ["agent_name"]);
-    const hours = firstNumber(raw, ["actual_hours"]) ?? 0;
-    if (!agentName || hours <= 0) continue;
-
+    if (!agentName) continue;
     const matched = matchKnownTech(agentName, KNOWN_TECHS);
     if (!matched) continue;
 
-    rawHoursByTech.set(matched, (rawHoursByTech.get(matched) ?? 0) + hours);
+    const hours = firstNumber(raw, ["actual_hours"]) ?? 0;
+    if (hours > 0) {
+      rawHoursByTech.set(matched, (rawHoursByTech.get(matched) ?? 0) + hours);
 
-    const key = dayKey(date);
-    const dayMap = rawDailyByTech.get(matched) ?? new Map<string, number>();
-    dayMap.set(key, (dayMap.get(key) ?? 0) + hours);
-    rawDailyByTech.set(matched, dayMap);
+      const key = dayKey(date);
+      const dayMap = rawDailyByTech.get(matched) ?? new Map<string, number>();
+      dayMap.set(key, (dayMap.get(key) ?? 0) + hours);
+      rawDailyByTech.set(matched, dayMap);
+    }
+
+    // Tracked independently of actual_hours (not `hours > 0`-gated above)
+    // — confirmed live that chargeable_hours can be nonzero on a day
+    // actual_hours reads as ~0 (and can even exceed actual_hours some
+    // days), since it comes from ticket time entries marked chargeable
+    // rather than the timesheet's own approved daily total. Summing the
+    // whole week smooths out that day-level noise into a meaningful
+    // client-vs-internal split.
+    const chargeableHours = firstNumber(raw, ["chargeable_hours"]) ?? 0;
+    if (chargeableHours > 0) {
+      rawChargeableByTech.set(matched, (rawChargeableByTech.get(matched) ?? 0) + chargeableHours);
+    }
   }
 
   const hoursByTech = new Map<Tech, number>();
@@ -509,7 +566,12 @@ async function computeWeeklyHoursByTech(
     dailyByTech.set(tech, rounded);
   }
 
-  return { weekly: hoursByTech, daily: dailyByTech };
+  const chargeableByTech = new Map<Tech, number>();
+  for (const [tech, hours] of rawChargeableByTech) {
+    chargeableByTech.set(tech, Math.round(hours * 10) / 10);
+  }
+
+  return { weekly: hoursByTech, daily: dailyByTech, chargeableWeekly: chargeableByTech };
 }
 
 export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: string }> {
@@ -522,7 +584,7 @@ export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: stri
 
   try {
     const clientSecret = decryptToken(credential.encryptedClientSecret);
-    const { weekly: hoursByTech, daily: dailyByTech } = await withHaloAuthRetry(
+    const { weekly: hoursByTech, daily: dailyByTech, chargeableWeekly: chargeableByTech } = await withHaloAuthRetry(
       credential.instanceUrl,
       credential.clientId,
       clientSecret,
@@ -544,13 +606,21 @@ export async function syncTeamTimeGaps(): Promise<{ synced: number; error?: stri
     for (const person of KNOWN_TECHS) {
       const loggedHours = hoursByTech.get(person) ?? 0;
       const expectedHours = techRoleConfigs.get(person)?.expectedWeeklyHours ?? 40;
+      // chargeableHours stays null (not 0) when this week's sync found no
+      // chargeable_hours rows at all for this tech, same "unavailable,
+      // not zero" rule as everywhere else in this app — a tech who
+      // genuinely logged 0 client hours this week looks identical to one
+      // whose data just hasn't synced yet unless the two are told apart,
+      // so this only writes a real number when the raw data had one.
+      const chargeableHours = chargeableByTech.get(person) ?? null;
+      const expectedChargeableHours = techRoleConfigs.get(person)?.expectedChargeableHours ?? 30;
       await prisma.timeGap.upsert({
         where: { person_periodStart: { person, periodStart } },
         // expectedHours included in `update` too (not just `create`) so
         // an admin's change takes effect on the very next page load this
         // week, not only starting next week's first sync.
-        update: { loggedHours, periodEnd, expectedHours },
-        create: { person, role: "TECH", expectedHours, loggedHours, periodStart, periodEnd },
+        update: { loggedHours, periodEnd, expectedHours, chargeableHours, expectedChargeableHours },
+        create: { person, role: "TECH", expectedHours, loggedHours, chargeableHours, expectedChargeableHours, periodStart, periodEnd },
       });
 
       const dayMap = dailyByTech.get(person);

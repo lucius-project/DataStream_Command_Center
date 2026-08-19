@@ -127,7 +127,7 @@ export async function updateKpiSettings(update: KpiSettingsUpdate): Promise<KpiS
   return prisma.kpiSettings.update({ where: { id: SETTINGS_ID }, data: update });
 }
 
-export type TechRoleConfigValue = { role: TechRole; expectedWeeklyHours: number };
+export type TechRoleConfigValue = { role: TechRole; expectedWeeklyHours: number; expectedChargeableHours: number };
 
 // Ensures a row exists per known tech (same "small per-person table,
 // upsert on demand" pattern as DailyHours/TechScoreDaily) and returns
@@ -145,15 +145,22 @@ export async function getTechRoleConfigs(knownTechs: readonly Tech[]): Promise<M
       }),
     ),
   );
-  return new Map(rows.map((r) => [r.person as Tech, { role: r.role, expectedWeeklyHours: r.expectedWeeklyHours }]));
+  return new Map(
+    rows.map((r) => [
+      r.person as Tech,
+      { role: r.role, expectedWeeklyHours: r.expectedWeeklyHours, expectedChargeableHours: r.expectedChargeableHours },
+    ]),
+  );
 }
 
-export async function upsertTechRoleConfigs(entries: { person: string; role: TechRole; expectedWeeklyHours: number }[]): Promise<void> {
+export async function upsertTechRoleConfigs(
+  entries: { person: string; role: TechRole; expectedWeeklyHours: number; expectedChargeableHours: number }[],
+): Promise<void> {
   await Promise.all(
     entries.map((e) =>
       prisma.techRoleConfig.upsert({
         where: { person: e.person },
-        update: { role: e.role, expectedWeeklyHours: e.expectedWeeklyHours },
+        update: { role: e.role, expectedWeeklyHours: e.expectedWeeklyHours, expectedChargeableHours: e.expectedChargeableHours },
         create: e,
       }),
     ),

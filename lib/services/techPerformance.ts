@@ -43,6 +43,21 @@ export type TechPerformance = {
   // figures — still shown, just not what drives the color anymore.
   pacePct: number;
   expectedHoursToDate: number;
+  // Client (chargeable) hours out of loggedHours, and the admin-set
+  // weekly target (default 30 of 40) — see TimeGap.chargeableHours's
+  // schema comment for why this is null (not 0) until a real sync has
+  // populated it. chargeablePct/chargeableHoursToDate mirror pacePct/
+  // expectedHoursToDate's day-of-week pro-rating, same reasoning: a
+  // Tuesday reading shouldn't look "behind" against the full week's
+  // target. internalHours is what's left of loggedHours after client
+  // hours — floored at 0 since chargeable_hours can slightly exceed
+  // actual_hours some days (see computeWeeklyHoursByTech's comment on
+  // why), which would otherwise show as a nonsensical negative.
+  chargeableHours: number | null;
+  expectedChargeableHours: number;
+  chargeableHoursToDate: number;
+  chargeablePct: number | null;
+  internalHours: number | null;
   trend: TechTrendPoint[];
   dailyHours: number[];
   openCount: number;
@@ -305,12 +320,25 @@ export async function getTechPerformance(directory: ContactDirectory | null): Pr
     const loggedHours = gap?.loggedHours ?? 0;
     const expectedHoursToDate = Math.round(expectedHours * weekFraction * 10) / 10;
     const pacePct = expectedHoursToDate > 0 ? Math.round((loggedHours / expectedHoursToDate) * 1000) / 10 : 100;
+    const chargeableHours = gap?.chargeableHours ?? null;
+    const expectedChargeableHours = gap?.expectedChargeableHours ?? 30;
+    const chargeableHoursToDate = Math.round(expectedChargeableHours * weekFraction * 10) / 10;
+    const chargeablePct =
+      chargeableHours !== null && chargeableHoursToDate > 0
+        ? Math.round((chargeableHours / chargeableHoursToDate) * 1000) / 10
+        : null;
+    const internalHours = chargeableHours !== null ? Math.max(0, Math.round((loggedHours - chargeableHours) * 10) / 10) : null;
     const base = {
       person,
       expectedHours,
       loggedHours,
       pacePct,
       expectedHoursToDate,
+      chargeableHours,
+      expectedChargeableHours,
+      chargeableHoursToDate,
+      chargeablePct,
+      internalHours,
       trend: trendByPerson.get(person) ?? [],
       dailyHours: dailyByPerson.get(person) ?? [0, 0, 0, 0, 0],
       openCount: l?.openCount ?? 0,

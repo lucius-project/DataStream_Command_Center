@@ -7,7 +7,7 @@ import type { Tech } from "@/lib/integrations/halopsa";
 
 const ROLE_OPTIONS = Object.keys(TECH_ROLE_LABELS) as TechRole[];
 
-export type TechRoleRow = { person: Tech; role: TechRole; expectedWeeklyHours: number };
+export type TechRoleRow = { person: Tech; role: TechRole; expectedWeeklyHours: number; expectedChargeableHours: number };
 
 // Role Normalization is mandatory per the master spec — this is the
 // admin UI the code comments on TechRole/roleFor (techPerformanceScore.ts)
@@ -32,6 +32,14 @@ export function TechRolesForm({ rows: initialRows }: { rows: TechRoleRow[] }) {
       setError("Expected weekly hours must be a positive number for every technician.");
       return;
     }
+    if (rows.some((r) => !(r.expectedChargeableHours >= 0))) {
+      setError("Expected client hours must be zero or a positive number for every technician.");
+      return;
+    }
+    if (rows.some((r) => r.expectedChargeableHours > r.expectedWeeklyHours)) {
+      setError("Expected client hours can't exceed expected weekly hours.");
+      return;
+    }
     setBusy(true);
     const res = await fetch("/api/admin/tech-roles", {
       method: "POST",
@@ -53,11 +61,13 @@ export function TechRolesForm({ rows: initialRows }: { rows: TechRoleRow[] }) {
       <p className="text-xs text-text-faint">
         Role affects the productivity throughput target each tech is measured against — a senior engineer solving
         hard escalations isn&apos;t expected to close as many tickets as a service desk technician. The technician
-        roster itself (who&apos;s on the list) is still a code-level change, not editable here.
+        roster itself (who&apos;s on the list) is still a code-level change, not editable here. Expected client
+        hours is the portion of the weekly total that should go toward billable client work (HaloPSA&apos;s own
+        Timesheet chargeable-hours tracking) — the rest covers internal work, admin, and breaks.
       </p>
       <div className="flex flex-col gap-2">
         {rows.map((row) => (
-          <div key={row.person} className="grid grid-cols-[1fr_2fr_1fr] items-center gap-3 rounded-md border border-border bg-panel-raised p-2.5">
+          <div key={row.person} className="grid grid-cols-[1fr_2fr_1fr_1fr] items-center gap-3 rounded-md border border-border bg-panel-raised p-2.5">
             <span className="font-data text-sm text-text">{row.person}</span>
             <select
               value={row.role}
@@ -80,6 +90,17 @@ export function TechRolesForm({ rows: initialRows }: { rows: TechRoleRow[] }) {
                 className="min-h-11 w-full rounded-md border border-border-strong bg-panel px-3 font-data text-sm text-text focus:border-accent focus:outline-none"
               />
               <span className="shrink-0 font-data text-xs text-text-faint">h/wk</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                step="0.5"
+                value={row.expectedChargeableHours}
+                onChange={(e) => updateRow(row.person, { expectedChargeableHours: Number(e.target.value) })}
+                className="min-h-11 w-full rounded-md border border-border-strong bg-panel px-3 font-data text-sm text-text focus:border-accent focus:outline-none"
+              />
+              <span className="shrink-0 font-data text-xs text-text-faint">client h/wk</span>
             </label>
           </div>
         ))}

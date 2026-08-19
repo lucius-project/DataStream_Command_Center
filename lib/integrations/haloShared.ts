@@ -190,6 +190,30 @@ export async function fetchHaloTicketHistory(instanceUrl: string, accessToken: s
   return unwrapList(data, "tickets");
 }
 
+// Single-ticket lookup — used to tell a ticket that genuinely closed
+// apart from one that was deleted, both of which simply vanish from
+// fetchHaloTickets' open_only=true feed the same way (see
+// TicketCloseLog's schema comment). Returns null when HaloPSA reports no
+// such ticket at all (404 — confirmed live against a nonexistent ID).
+// Confirmed live that a still-resolvable ticket also carries its own
+// `deleted` boolean (soft-delete, not purged) — callers must check both
+// this null case and that field, not just the HTTP status.
+export async function fetchHaloTicketById(
+  instanceUrl: string,
+  accessToken: string,
+  ticketId: string,
+): Promise<RawHaloRecord | null> {
+  const res = await fetch(`${normalizeInstanceUrl(instanceUrl)}/api/Tickets/${encodeURIComponent(ticketId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`HaloPSA ticket lookup for ${ticketId} failed (${res.status}): ${body.slice(0, 300)}`);
+  }
+  return res.json() as Promise<RawHaloRecord>;
+}
+
 // Runs `fn` over `items` with at most `limit` in flight at once. Shared by
 // every caller that fans out one Actions call per ticket (the monthly
 // Client Profitability backfill, up to ~1000 tickets; the weekly Team Time

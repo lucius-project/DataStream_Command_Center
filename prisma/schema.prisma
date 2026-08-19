@@ -233,11 +233,11 @@ model NinjaRmmOAuthToken {
 // ID — so this is simpler than HaloPSA/Microsoft but the same singleton +
 // encrypted-secret pattern.
 model UnitedCloudCredential {
-  id               String   @id @default("unitedcloud")
-  apiBaseUrl       String
-  domain           String
-  encryptedApiKey  String
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default("unitedcloud")
+  apiBaseUrl      String
+  domain          String
+  encryptedApiKey String
+  updatedAt       DateTime @updatedAt
 }
 
 // Anthropic API key for the Business Health chat. Same singleton +
@@ -280,9 +280,9 @@ enum TicketPriority {
 }
 
 model TicketSnapshot {
-  id             String         @id @default(cuid())
-  haloTicketId   String         @unique
-  haloClientId   String?
+  id            String         @id @default(cuid())
+  haloTicketId  String         @unique
+  haloClientId  String?
   // Raw client_name off the ticket itself — confirmed live to be
   // reliably populated (50/50 open tickets on a real sync) and already
   // on the same cheap list endpoint this app fetches, so this is a
@@ -290,20 +290,20 @@ model TicketSnapshot {
   // table (which only has rows for clients that have gone through the
   // separate Client Profitability sync). Null only for genuinely
   // client-less tickets (e.g. an automated vendor-alert ticket).
-  clientName     String?
-  summary        String
-  status         String
-  priority       TicketPriority
-  assignedTech   String
-  department     String
+  clientName    String?
+  summary       String
+  status        String
+  priority      TicketPriority
+  assignedTech  String
+  department    String
   // Raw tickettype_id off the ticket list response (e.g. 5 = "Project",
   // 20 = "Project Task", confirmed live via /api/TicketType) — used to
   // exclude project-tracking tickets from Manager Alerts/Needs Attention
   // (see PROJECT_TICKET_TYPE_IDS, lib/integrations/halopsa.ts). Nullable
   // since a ticket synced before this field existed, or one HaloPSA
   // omits the field for, shouldn't be treated as any particular type.
-  ticketTypeId   Int?
-  openedAt       DateTime
+  ticketTypeId  Int?
+  openedAt      DateTime
   // Kept as-is (merged respondbydate-or-fixbydate fallback) — existing
   // consumers (Dispatch pane's SLA countdown, the >24h SLA_BREACH flag,
   // the chat tool) all read this field and stay untouched. The three
@@ -311,19 +311,19 @@ model TicketSnapshot {
   // and carry the real underlying values *un-merged* — Response SLA and
   // Resolution SLA need to know respond-by and fix-by separately, not
   // whichever HaloPSA field happened to be set.
-  slaDueAt       DateTime?
+  slaDueAt      DateTime?
   // respondbydate raw (response target) and fixbydate raw (resolution
   // target) — confirmed both present on the live ticket list endpoint,
   // no extra API call needed beyond the sync this app already does.
-  respondByAt    DateTime?
-  fixByAt        DateTime?
+  respondByAt   DateTime?
+  fixByAt       DateTime?
   // responsedate raw — HaloPSA's own first-response timestamp. Confirmed
   // live to carry the identical value as the ticket *detail* endpoint's
   // first_responsedate field (cross-checked against a real ticket), but
   // — unlike first_responsedate — already present on the cheap list
   // endpoint this app already fetches, so Response SLA / Median First
   // Response need zero additional HaloPSA requests.
-  respondedAt    DateTime?
+  respondedAt   DateTime?
   // lastactiondate raw — used for stale-ticket detection. This is *any*
   // update (including automated/customer ones), not specifically a
   // technician action — HaloPSA doesn't expose "last technician action"
@@ -331,8 +331,8 @@ model TicketSnapshot {
   // deliberately avoids (see getStaleTickets in operations.ts) to stay
   // cheap enough to run on every page load. Treat as an honest
   // approximation, not an exact "technician touched this" signal.
-  lastActionAt   DateTime?
-  lastUpdatedAt  DateTime
+  lastActionAt  DateTime?
+  lastUpdatedAt DateTime
 
   attentionFlags AttentionFlag[]
 
@@ -350,12 +350,18 @@ model TicketSnapshot {
 // left the open feed), not HaloPSA's own exact resolution instant — on
 // this app's every-page-load sync cadence that's normally within
 // minutes, but it's labeled honestly as detection time, not claimed as
-// precise. "Closed" here specifically means "no longer in HaloPSA's
-// open_only=true feed" — the overwhelming majority of the time that's a
-// real resolution, but it could technically also mean the ticket was
-// merged into another one (HaloPSA's merged_into_id field exists,
-// unconfirmed whether merged tickets also leave the open feed the same
-// way) — not distinguished here.
+// precise.
+//
+// A ticket also leaves the open feed when it's deleted, not just when
+// it's genuinely resolved — confirmed live that ~34% of what this table
+// used to log over a 30-day window were deleted noise tickets (device
+// alerts, bounced mail, etc.), not real closes. reconcileTickets now
+// confirms each departing ticket via fetchHaloTicketById before writing
+// a row here, so a row in this table means a real close, not a guess —
+// deleted tickets are removed from TicketSnapshot the same as before,
+// they just never reach TicketCloseLog. Merged tickets (HaloPSA's
+// merged_into_id field exists) are still not distinguished — unconfirmed
+// whether a merge also leaves the open feed the same way a delete does.
 model TicketCloseLog {
   id           String         @id @default(cuid())
   haloTicketId String         @unique
@@ -417,13 +423,25 @@ enum TimeGapRole {
 }
 
 model TimeGap {
-  id             String      @id @default(cuid())
-  person         String
-  role           TimeGapRole
-  expectedHours  Float
-  loggedHours    Float
-  periodStart    DateTime
-  periodEnd      DateTime
+  id            String      @id @default(cuid())
+  person        String
+  role          TimeGapRole
+  expectedHours Float
+  loggedHours   Float
+  periodStart   DateTime
+  periodEnd     DateTime
+
+  // Client (chargeable) hours out of loggedHours — HaloPSA's own
+  // Timesheet.chargeable_hours field (confirmed live, distinct from
+  // actual_hours; not a derived guess). Nullable because rows written
+  // before this feature shipped never had it, and it can't be backfilled
+  // honestly (see ClientLaborMonthly's schema comment for the same
+  // never-backfill rule). expectedChargeableHours is frozen from
+  // TechRoleConfig at sync time, same reason expectedHours already is:
+  // a later admin change to the 30h target shouldn't rewrite what a past
+  // week was actually measured against.
+  chargeableHours         Float?
+  expectedChargeableHours Float?
 
   @@unique([person, periodStart])
   @@index([person])
@@ -492,8 +510,8 @@ model TicketLoadWeekly {
 // null when a category has no data yet (see HealthScoreCategory) — a
 // missing score here means "unavailable that day," not zero.
 model ServiceDeskHealthDaily {
-  id                  String   @id @default(cuid())
-  date                DateTime @unique
+  id   String   @id @default(cuid())
+  date DateTime @unique
 
   healthScore         Int?
   responsivenessScore Int?
@@ -501,16 +519,16 @@ model ServiceDeskHealthDaily {
   workloadScore       Int?
   phoneScore          Int?
 
-  responseSlaPct      Float?
-  resolutionSlaPct    Float?
-  ticketsCreated      Int
-  ticketsClosed       Int
-  netChange           Int
-  backlogTotal        Int
-  agingOver24h        Int
-  phoneAnswerRatePct  Float?
+  responseSlaPct     Float?
+  resolutionSlaPct   Float?
+  ticketsCreated     Int
+  ticketsClosed      Int
+  netChange          Int
+  backlogTotal       Int
+  agingOver24h       Int
+  phoneAnswerRatePct Float?
 
-  updatedAt           DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 // Daily snapshot of each technician's Performance Score — the per-tech
@@ -521,9 +539,9 @@ model ServiceDeskHealthDaily {
 // because a category can be null when it has no data yet (see
 // TechScoreCategory).
 model TechScoreDaily {
-  id                   String   @id @default(cuid())
-  person               String
-  date                 DateTime
+  id     String   @id @default(cuid())
+  person String
+  date   DateTime
 
   score                Int?
   serviceDeliveryScore Int?
@@ -532,10 +550,28 @@ model TechScoreDaily {
   workManagementScore  Int?
   phoneScore           Int?
 
-  updatedAt            DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@unique([person, date])
   @@index([person])
+}
+
+// One row per named background-sync group (e.g. "techPerformance") — the
+// stale-while-revalidate pattern's freshness marker. A page's own render
+// reads only the DB (fast, no external calls); a client component fires
+// the matching /api/*/sync route after mount, which does the actual
+// HaloPSA/NinjaOne/United Cloud calls and writes this row when done. See
+// components/tech-performance/BackgroundSync.tsx.
+//
+// lastSyncedAt only advances on a fully clean run — a partial failure
+// leaves it where it was, so "synced 3m ago" never quietly means "synced
+// 3m ago, minus whatever broke." lastAttemptAt advances every run,
+// success or not, so a failing sync doesn't masquerade as simply idle.
+model SyncStatus {
+  id            String    @id
+  lastSyncedAt  DateTime?
+  lastAttemptAt DateTime  @default(now())
+  lastError     String?
 }
 
 // ---------------------------------------------------------------------------
@@ -630,13 +666,24 @@ model FocusSession {
 // Company Profile page's "Link accounts" panel, not auto-matched, since
 // they feed real financial numbers.
 model Client {
-  id                   String   @id @default(cuid())
-  haloClientId         String   @unique
+  id                   String             @id @default(cuid())
+  haloClientId         String             @unique
   name                 String
-  hoursThisMonth       Float    @default(0)
+  hoursThisMonth       Float              @default(0)
   ninjaOrganizationId  String?
   quickbooksCustomerId String?
-  updatedAt            DateTime @updatedAt
+  // Managed vs. Co-Managed vs. Break Fix — computed at sync time
+  // (lib/integrations/haloClients.ts) from this client's own
+  // /api/ClientContract ref text (confirmed live: exactly one contract
+  // on this instance says "Co-Managed" in its own name, e.g. "FMI
+  // Co-Managed Agreement" — the rest say "[X] Managed Services
+  // Agreement", or the client has no contract at all). Persisted here
+  // rather than derived from AgreementItem at render time because a
+  // client with real priced line items (see AgreementItem.unitPrice)
+  // no longer carries its own contract's ref string on any row — only
+  // the fallback (no-recurring-invoice) rows do.
+  serviceModel         ClientServiceModel @default(BREAK_FIX)
+  updatedAt            DateTime           @updatedAt
 
   agreementItems AgreementItem[]
   techHours      ClientTechHours[]
@@ -644,6 +691,12 @@ model Client {
   financials     ClientFinancials?
   seatChecks     SeatReconciliation[]
   laborMonthly   ClientLaborMonthly[]
+}
+
+enum ClientServiceModel {
+  MANAGED
+  CO_MANAGED
+  BREAK_FIX
 }
 
 // Recomputed on every sync (no historical ledger), same pattern as
@@ -777,7 +830,7 @@ model ClientMonthlyHours {
   id        String   @id @default(cuid())
   clientId  String
   client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  yearMonth String   // "YYYY-MM", sortable as a string
+  yearMonth String // "YYYY-MM", sortable as a string
   hours     Float
   updatedAt DateTime @updatedAt
 
@@ -794,8 +847,8 @@ model ClientMonthlyHours {
 // does. `missed` is derived at sync time from whether answeredAt is set,
 // not trusted from a single guessed vendor field.
 model CallRecord {
-  id                String   @id @default(cuid())
-  unitedCloudCallId String   @unique
+  id                String    @id @default(cuid())
+  unitedCloudCallId String    @unique
   direction         String
   fromLabel         String
   toLabel           String
@@ -818,7 +871,7 @@ model CallRecord {
   answeredAt        DateTime?
   durationSeconds   Int
   missed            Boolean
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   @@index([startAt])
 }
@@ -968,14 +1021,14 @@ model KpiSettings {
   // (green at-or-below agingGreenCount). Business Health's own bands
   // (Gross Margin, Device Health, etc.) are a different page and stay
   // hardcoded — out of this phase's scope.
-  responseSlaGreenPct   Int @default(90)
-  responseSlaYellowPct  Int @default(75)
-  resolutionSlaGreenPct Int @default(90)
+  responseSlaGreenPct    Int @default(90)
+  responseSlaYellowPct   Int @default(75)
+  resolutionSlaGreenPct  Int @default(90)
   resolutionSlaYellowPct Int @default(75)
-  agingGreenCount       Int @default(0)
-  agingYellowCount      Int @default(4)
-  answerRateGreenPct    Int @default(90)
-  answerRateYellowPct   Int @default(80)
+  agingGreenCount        Int @default(0)
+  agingYellowCount       Int @default(4)
+  answerRateGreenPct     Int @default(90)
+  answerRateYellowPct    Int @default(80)
 
   updatedAt DateTime @updatedAt
 }
@@ -1005,11 +1058,15 @@ enum TechRole {
 // these defaults, same "small per-person table, upsert on demand" pattern
 // as DailyHours/TechScoreDaily.
 model TechRoleConfig {
-  id                  String   @id @default(cuid())
-  person              String   @unique
-  role                TechRole @default(SERVICE_DESK_TECHNICIAN)
-  expectedWeeklyHours Float    @default(40)
-  updatedAt           DateTime @updatedAt
+  id                      String   @id @default(cuid())
+  person                  String   @unique
+  role                    TechRole @default(SERVICE_DESK_TECHNICIAN)
+  expectedWeeklyHours     Float    @default(40)
+  // Of expectedWeeklyHours, how much should be client-chargeable work —
+  // default 30 of 40 (the other 10 is internal/admin/breaks), admin-
+  // editable per tech alongside expectedWeeklyHours in the same form.
+  expectedChargeableHours Float    @default(30)
+  updatedAt               DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,13 +1120,13 @@ model StaffUser {
 // lib/services/sops.ts. taskArea is deliberately free text, not a
 // rigid enum — the set of task areas isn't known/fixed up front.
 model SopEntry {
-  id        String     @id @default(cuid())
+  id        String    @id @default(cuid())
   title     String
   body      String
   taskArea  String?
   roles     String
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   files     SopFile[]
 }
 
@@ -1080,14 +1137,14 @@ model SopEntry {
 // Next.js directly, and these are role-gated — see
 // app/api/sops/[id]/files/[fileId]/route.ts for the actual boundary).
 model SopFile {
-  id         String   @id @default(cuid())
-  sopEntryId String
-  sopEntry   SopEntry @relation(fields: [sopEntryId], references: [id], onDelete: Cascade)
-  fileName   String
-  mimeType   String
-  sizeBytes  Int
+  id          String   @id @default(cuid())
+  sopEntryId  String
+  sopEntry    SopEntry @relation(fields: [sopEntryId], references: [id], onDelete: Cascade)
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
   storagePath String
-  createdAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([sopEntryId])
 }
@@ -1115,4 +1172,66 @@ model VendorSubscription {
   updatedAt   DateTime @updatedAt
 
   @@index([renewalDate])
+}
+
+// ---------------------------------------------------------------------------
+// CRM (Phase C2) — this app's own sales pipeline, not a Keap mirror
+// ---------------------------------------------------------------------------
+
+// Confirmed live: Keap's own "Opportunity" pipeline here has zero rows
+// in an open/working stage (all 147 sit in terminal Closed/Won or one of
+// three Lost reasons) — it's used as a sales-outcome log, not day-to-day
+// pipeline management, and Keap's UI itself isn't how this account wants
+// to work a list anyway. This is a different, app-native stage model
+// (company/account-level, not per-deal) that this app owns going
+// forward — Keap's /companies endpoint is only ever a one-time seed of
+// real business records (see keapCompanyId below), never a live sync
+// that could clobber stage progress made here.
+enum CrmStage {
+  SUSPECT
+  FARMLIST
+  RAW_LEAD
+  QUALIFIED_LEAD
+  CLIENT
+  PAUSE_MARKETING
+  NOT_A_FIT
+  AVOID
+}
+
+model CrmAccount {
+  id    String   @id @default(cuid())
+  name  String
+  stage CrmStage @default(SUSPECT)
+
+  // Denormalized contact info, seeded from Keap's /companies record at
+  // import time (or entered by hand for an account added directly here)
+  // — same "cache what's already in hand, no extra fetch to display it"
+  // pattern TicketSnapshot/CallRecord use for their own denormalized
+  // fields.
+  website      String?
+  phone        String?
+  email        String?
+  addressLine1 String?
+  city         String?
+  region       String?
+  postalCode   String?
+
+  notes String?
+
+  // Set only on rows created by the Keap import — null for anything
+  // added manually in this app. Never overwritten after the row exists;
+  // only used so re-running the import can upsert (pick up a new Keap
+  // company, refresh contact info) without ever touching stage/notes or
+  // creating a duplicate row for a company already in the pipeline.
+  keapCompanyId Int? @unique
+
+  // Updated only when stage actually changes (not on every edit) — "how
+  // long has this been sitting in Farmlist" is a real question a kanban
+  // board should be able to answer at a glance.
+  stageChangedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stage])
 }

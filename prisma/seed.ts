@@ -58,12 +58,23 @@ async function seedTimeGaps() {
   const periodEnd = endOfWeek();
 
   // Barb doesn't track hours, so she's intentionally not in this list —
-  // Team time gaps is techs only.
-  const rows: { person: string; role: "TECH" | "ADMIN"; expectedHours: number; loggedHours: number }[] = [
-    { person: "Miguel", role: "TECH", expectedHours: 40, loggedHours: 41.5 },
-    { person: "Cameron", role: "TECH", expectedHours: 40, loggedHours: 37.5 },
-    { person: "Darryll", role: "TECH", expectedHours: 40, loggedHours: 31 },
-    { person: "Emily", role: "TECH", expectedHours: 40, loggedHours: 35.5 },
+  // Team time gaps is techs only. chargeableHours/expectedChargeableHours
+  // demo the client-vs-internal split (default target 30 of 40, see
+  // TechRoleConfig's schema comment) with a plausible spread: Miguel
+  // right at target, Cameron a bit light, Darryll well under (matching
+  // his already-low loggedHours), Emily close to target.
+  const rows: {
+    person: string;
+    role: "TECH" | "ADMIN";
+    expectedHours: number;
+    loggedHours: number;
+    chargeableHours: number;
+    expectedChargeableHours: number;
+  }[] = [
+    { person: "Miguel", role: "TECH", expectedHours: 40, loggedHours: 41.5, chargeableHours: 30.5, expectedChargeableHours: 30 },
+    { person: "Cameron", role: "TECH", expectedHours: 40, loggedHours: 37.5, chargeableHours: 25, expectedChargeableHours: 30 },
+    { person: "Darryll", role: "TECH", expectedHours: 40, loggedHours: 31, chargeableHours: 18.5, expectedChargeableHours: 30 },
+    { person: "Emily", role: "TECH", expectedHours: 40, loggedHours: 35.5, chargeableHours: 27.5, expectedChargeableHours: 30 },
   ];
 
   for (const row of rows) {

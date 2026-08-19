@@ -21,7 +21,12 @@ export default async function AdminPage() {
 
   const techRoleRows: TechRoleRow[] = KNOWN_TECHS.map((person: Tech) => {
     const config = techRoleConfigs.get(person)!;
-    return { person, role: config.role, expectedWeeklyHours: config.expectedWeeklyHours };
+    return {
+      person,
+      role: config.role,
+      expectedWeeklyHours: config.expectedWeeklyHours,
+      expectedChargeableHours: config.expectedChargeableHours,
+    };
   });
 
   return (
