@@ -1,45 +1,34 @@
+import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth/roleRank";
-import { withComputeThrottle } from "@/lib/integrations/haloShared";
-import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halopsa";
-import { syncDevices } from "@/lib/integrations/ninjaRmm";
-import { syncCallActivity } from "@/lib/integrations/unitedCloud";
 import { getBusinessHealthSnapshot } from "@/lib/services/businessHealth";
 import { getAnthropicCredentialStatus } from "@/lib/services/integrations";
 import { HealthGrid } from "@/components/business-health/HealthGrid";
 import { ActionList } from "@/components/business-health/ActionList";
 import { LockedStrip } from "@/components/business-health/LockedStrip";
 import { HealthChat } from "@/components/business-health/HealthChat";
+import { BackgroundSync } from "@/components/shared/BackgroundSync";
 
-// Deliberately does NOT call syncAllClientFinancials/syncSeatReconciliation
-// (seat reconciliation is still a per-client NinjaRMM fan-out; financials
-// itself is now a fixed 3-query batch, but there's no reason for this page
-// to duplicate a sync /clients already runs) or backfillClientMonthlyHours
-// (explicit user-triggered action). This page
+// Deliberately does NOT sync ClientFinancials/SeatReconciliation (seat
+// reconciliation is still a per-client NinjaRMM fan-out; financials
+// itself is now a fixed 3-query batch, but there's no reason for this
+// page to duplicate a sync /clients already runs) or
+// backfillClientMonthlyHours (explicit user-triggered action). This page
 // reads whatever ClientFinancials/SeatReconciliation rows already exist
 // from prior /clients visits — see lib/services/businessHealth.ts's
-// "unavailable" coverage handling. The syncs below are all either a fixed
-// small cost or already internally throttled; bundling them under one more
-// 60s throttle protects against this page — the new app home — being hit
-// far more often than any single module page.
-async function syncBundle(): Promise<string[]> {
-  return withComputeThrottle("businessHealthSyncBundle", 60_000, async () => {
-    const [tickets, timeGaps, devices, calls] = await Promise.all([
-      syncTicketsFromHalo(),
-      syncTeamTimeGaps(),
-      syncDevices(),
-      syncCallActivity(),
-    ]);
-    return [tickets.error, timeGaps.error, devices.error, calls.error].filter((e): e is string => Boolean(e));
-  });
-}
-
+// "unavailable" coverage handling.
+//
+// No HaloPSA/NinjaOne/United Cloud calls happen on this render — those
+// moved to app/api/business-health/sync/route.ts, fired by
+// <BackgroundSync> right after the page paints from whatever's already
+// in the database. See SyncStatus's schema comment.
 export default async function BusinessHealthPage() {
   await requireRole("SERVICE_MANAGER");
-  const syncErrors = await syncBundle();
-  const [snapshot, anthropicStatus] = await Promise.all([
+  const [syncStatus, snapshot, anthropicStatus] = await Promise.all([
+    prisma.syncStatus.findUnique({ where: { id: "businessHealth" } }),
     getBusinessHealthSnapshot(),
     getAnthropicCredentialStatus(),
   ]);
+  const syncErrors = syncStatus?.lastError ? syncStatus.lastError.split(" · ") : [];
 
   return (
     <div className="mx-auto flex h-full max-w-6xl flex-col p-4 md:p-6">
@@ -48,10 +37,17 @@ export default async function BusinessHealthPage() {
           <h1 className="font-display text-2xl font-semibold text-text">Business Health</h1>
           <p className="mt-1 text-sm text-text-muted">Everything that needs your attention, at a glance.</p>
         </div>
-        <div className="shrink-0 text-right font-data text-[11px] text-text-faint">
-          as of {snapshot.generatedAt.toLocaleTimeString()}
-          <br />
-          {snapshot.coverage.clientsWithFinancials} of {snapshot.coverage.clientsTotal} clients financials-synced
+        <div className="shrink-0 flex flex-col items-end gap-1 text-right font-data text-[11px] text-text-faint">
+          <BackgroundSync
+            syncPath="/api/business-health/sync"
+            lastSyncedAt={syncStatus?.lastSyncedAt?.toISOString() ?? null}
+            hadLastError={Boolean(syncStatus?.lastError)}
+          />
+          <span>
+            as of {snapshot.generatedAt.toLocaleTimeString()}
+            <br />
+            {snapshot.coverage.clientsWithFinancials} of {snapshot.coverage.clientsTotal} clients financials-synced
+          </span>
         </div>
       </div>
 

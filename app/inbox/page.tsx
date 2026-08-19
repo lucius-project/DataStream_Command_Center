@@ -1,14 +1,9 @@
 import Link from "next/link";
 import { SlidersHorizontal, TrendingUp } from "lucide-react";
+import { prisma } from "@/lib/prisma";
 import { isConnected } from "@/lib/auth/msal";
 import { requireRole } from "@/lib/auth/roleRank";
-import {
-  syncInboxFromGraph,
-  getInboxDailyCounts,
-  getPriorityItems,
-  getWaitingItems,
-  getDelegatedItems,
-} from "@/lib/services/inbox";
+import { getInboxDailyCounts, getPriorityItems, getWaitingItems, getDelegatedItems } from "@/lib/services/inbox";
 import { getStaffUsers } from "@/lib/services/staffUsers";
 import { getAnthropicCredentialStatus } from "@/lib/services/integrations";
 import { formatAge, formatWaiting, formatDueDate, formatDollarAmount } from "@/lib/inboxDisplay";
@@ -16,6 +11,7 @@ import { MorningBrief } from "@/components/inbox/MorningBrief";
 import { CategoryCountStrip } from "@/components/inbox/CategoryCountStrip";
 import { InboxItemCard } from "@/components/inbox/InboxItemCard";
 import { WhatAmIForgetting } from "@/components/inbox/WhatAmIForgetting";
+import { BackgroundSync } from "@/components/shared/BackgroundSync";
 
 const BRIEF_COUNT = 4;
 
@@ -37,30 +33,26 @@ export default async function InboxPage({
   const params = await searchParams;
   const connected = await isConnected();
 
-  let priorityItems: Awaited<ReturnType<typeof getPriorityItems>> = [];
-  let waitingItems: Awaited<ReturnType<typeof getWaitingItems>> = [];
-  let delegatedItems: Awaited<ReturnType<typeof getDelegatedItems>> = [];
-  let counts: Awaited<ReturnType<typeof getInboxDailyCounts>> | null = null;
-  let syncError: string | null = null;
-  let classifyError: string | null = null;
-
-  if (connected) {
-    try {
-      const syncResult = await syncInboxFromGraph();
-      classifyError = syncResult.classifyError;
-      [priorityItems, waitingItems, delegatedItems, counts] = await Promise.all([
-        getPriorityItems(),
-        getWaitingItems(),
-        getDelegatedItems(),
-        getInboxDailyCounts(),
-      ]);
-    } catch (err) {
-      syncError = err instanceof Error ? err.message : "Failed to sync with Microsoft Graph.";
-    }
-  }
-
-  const [anthropicStatus, staff] = await Promise.all([getAnthropicCredentialStatus(), getStaffUsers()]);
+  // No Microsoft Graph call on this render — that moved to
+  // app/api/inbox/sync/route.ts, fired by <BackgroundSync> right after
+  // the page paints from whatever's already in the database. Reading
+  // these unconditionally (not gated on `connected`) means a sync error
+  // no longer hides already-synced mail behind a blank error screen —
+  // whatever was last synced stays visible, same as every other page in
+  // this rollout.
+  const [syncStatus, priorityItems, waitingItems, delegatedItems, counts, anthropicStatus, staff] = await Promise.all([
+    prisma.syncStatus.findUnique({ where: { id: "inbox" } }),
+    getPriorityItems(),
+    getWaitingItems(),
+    getDelegatedItems(),
+    getInboxDailyCounts(),
+    getAnthropicCredentialStatus(),
+    getStaffUsers(),
+  ]);
   const staffOptions = staff.filter((s) => s.role).map((s) => ({ id: s.id, name: s.name }));
+  const syncErrors = syncStatus?.lastError ? syncStatus.lastError.split(" · ") : [];
+  const syncError = syncErrors.find((e) => !e.startsWith("Classification:")) ?? null;
+  const classifyError = syncErrors.find((e) => e.startsWith("Classification:"))?.replace(/^Classification: /, "") ?? null;
 
   const briefItems = priorityItems.slice(0, BRIEF_COUNT);
 
@@ -72,7 +64,12 @@ export default async function InboxPage({
           <p className="mt-1 font-data text-xs text-text-faint">{DATE_FORMAT.format(new Date())}</p>
         </div>
         {connected && (
-          <div className="flex shrink-0 gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
+            <BackgroundSync
+              syncPath="/api/inbox/sync"
+              lastSyncedAt={syncStatus?.lastSyncedAt?.toISOString() ?? null}
+              hadLastError={Boolean(syncStatus?.lastError)}
+            />
             <WhatAmIForgetting />
             <Link
               href="/inbox/trends"
@@ -120,11 +117,11 @@ export default async function InboxPage({
 
       {connected && syncError && (
         <div className="mt-6 rounded-lg border border-status-critical/40 bg-status-critical-dim p-5 text-sm text-status-critical">
-          {syncError}
+          Sync failed, showing the last synced data: {syncError}
         </div>
       )}
 
-      {connected && !syncError && (
+      {connected && (
         <>
           {!anthropicStatus.configured && (
             <div className="mt-4 rounded-md border border-status-warn/40 bg-status-warn-dim px-4 py-3 text-sm text-status-warn">

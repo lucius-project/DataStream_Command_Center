@@ -1,14 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { requireSignedIn } from "@/lib/auth/roleRank";
-import { syncTicketsFromHalo, syncTeamTimeGaps } from "@/lib/integrations/halopsa";
-import { syncCallActivity } from "@/lib/integrations/unitedCloud";
-import { syncRemoteSessions } from "@/lib/integrations/ninjaRmm";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
-import { getTechPerformance, getTechOrgKpis, syncTicketLoadHistory } from "@/lib/services/techPerformance";
+import { getTechPerformance, getTechOrgKpis } from "@/lib/services/techPerformance";
 import {
   getServiceDeskHealthSnapshot,
   getSlaAtRiskTickets,
-  syncServiceDeskHealthDaily,
   getServiceDeskHealthWeekAgo,
   getServiceDeskHealthYesterday,
   getTicketTrend30DayTotal,
@@ -41,7 +37,6 @@ import {
   bucketStaleTicketsByTech,
   buildTechCardTicketData,
   computeTechPerformanceScore,
-  syncTechScoreDaily,
   getTechScoreWeekAgo,
   getTechScoreTrendArrow,
   roleFor,
@@ -62,21 +57,19 @@ import { ManagerActionQueue } from "@/components/service-desk/ManagerActionQueue
 import { CoachingSection } from "@/components/service-desk/CoachingSection";
 import { MorningBriefCard } from "@/components/service-desk/MorningBriefCard";
 import { InfoButton } from "@/components/shared/InfoButton";
+import { BackgroundSync } from "@/components/shared/BackgroundSync";
 
 export default async function TechPerformancePage() {
   const session = await requireSignedIn();
-  const [ticketSync, timeGapSync, callSync, remoteSessionSync] = await Promise.all([
-    syncTicketsFromHalo(),
-    syncTeamTimeGaps(),
-    syncCallActivity(),
-    syncRemoteSessions(),
-  ]);
-  // Run after syncTicketsFromHalo (not alongside it in the batch above)
-  // so both this week's TicketLoadWeekly snapshot and the new Service
-  // Desk Health section reflect freshly-synced ticket data, not whatever
-  // was on disk before this page load.
+  // No HaloPSA/NinjaOne/United Cloud calls on this render — those all
+  // moved to app/api/tech-performance/sync/route.ts, fired by
+  // <BackgroundSync> below right after the page has already painted from
+  // whatever's in the database. Everything here is a DB read (or, for
+  // directory, a throttled in-memory-cached read — see
+  // getContactDirectory's own comment), so this whole page renders fast
+  // and consistently, not "fast if the last sync happened to be recent."
   const [
-    ticketLoadSync,
+    syncStatus,
     directoryResult,
     healthSnapshot,
     slaAtRisk,
@@ -87,7 +80,7 @@ export default async function TechPerformancePage() {
     techRoleConfigs,
     haloCredential,
   ] = await Promise.all([
-    syncTicketLoadHistory(),
+    prisma.syncStatus.findUnique({ where: { id: "techPerformance" } }),
     // Same error-preserving pattern as app/calls/page.tsx — a failure
     // here (e.g. an expired HaloPSA token) shouldn't look identical to
     // "not connected yet," so it's folded into syncErrors below rather
@@ -119,16 +112,7 @@ export default async function TechPerformancePage() {
   // this one — used only by coaching.ts's org-level Call Answer Rate
   // insight (Phase 11), not rendered directly on this page otherwise.
   const callAnswerRateTrend = await getCallAnswerRateTrend(directory);
-  // Freezes today's already-computed healthSnapshot into
-  // ServiceDeskHealthDaily (Phase 10) — a pure DB upsert on values
-  // already in hand, no new query, so it runs alongside getTechPerformance
-  // rather than serialized after it.
-  const [{ techs, org, todayIndex, lastWeek }, healthDailySyncError] = await Promise.all([
-    getTechPerformance(directory),
-    syncServiceDeskHealthDaily(healthSnapshot)
-      .then(() => null)
-      .catch((e: unknown) => (e instanceof Error ? e.message : "Service Desk Health history sync failed.")),
-  ]);
+  const { techs, org, todayIndex, lastWeek } = await getTechPerformance(directory);
   const orgKpis = getTechOrgKpis(techs, org, lastWeek);
 
   // Fetched once here and reused by both the per-tech Performance Score
@@ -161,22 +145,17 @@ export default async function TechPerformancePage() {
   const timeCoverageByTech = await getTimeCoverage(interactionByTech);
   const staleByTech = bucketStaleTicketsByTech(staleTickets);
   const serviceMetricsByTech = await getTechServiceMetrics(staleTickets);
-  // Hoisted out of the per-tech render loop (Phase 10) so each tech's
-  // already-computed score can also be frozen into TechScoreDaily below,
-  // rather than being recomputed a second time or written to the DB from
-  // inside JSX-adjacent code — same "sync happens up top, render reads
-  // already-computed data" structure this page uses everywhere else.
+  // Hoisted out of the per-tech render loop (Phase 10) — every tech's
+  // score, computed once and reused by both the card render below and
+  // the coaching insights further down. Freezing this into TechScoreDaily
+  // (for the "vs 7d ago" trend) now happens in the background sync route
+  // instead of here — this is a pure read-time computation only.
   const scoreByTech = new Map<Tech, TechPerformanceScoreResult>(
     techs.map((tech) => [
       tech.person as Tech,
       computeTechPerformanceScore(tech, serviceMetricsFor(serviceMetricsByTech, tech.person), roleFor(tech.person, techRoleConfigs), techScoreWeights),
     ]),
   );
-  const techScoreSyncError = await Promise.all(
-    techs.map((tech) => syncTechScoreDaily(tech.person, scoreByTech.get(tech.person as Tech)!)),
-  )
-    .then(() => null)
-    .catch((e: unknown) => (e instanceof Error ? e.message : "Technician score history sync failed."));
   // "vs 7d ago" arrow on each tech's score badge — a separate read from
   // the write above (needs last week's row, not today's), same
   // "omit rather than fabricate" rule as getServiceDeskHealthWeekAgo.
@@ -222,14 +201,15 @@ export default async function TechPerformancePage() {
     alerts,
     coachingInsights,
   );
+  // The HaloPSA/NinjaOne/United Cloud/trend-history errors that used to
+  // come from this render's own sync calls now come from the last
+  // background sync's recorded outcome (see SyncStatus, joined with
+  // " · " by the route that writes it) — same set of possible errors,
+  // just reported a beat later than before instead of blocking on them.
+  // directoryResult.error is still this render's own, since the
+  // directory fetch itself stayed inline (see the comment above it).
   const syncErrors = [
-    ticketSync.error && `HaloPSA: ${ticketSync.error}`,
-    timeGapSync.error && `HaloPSA: ${timeGapSync.error}`,
-    callSync.error && `United Cloud: ${callSync.error}`,
-    ticketLoadSync.error && `Ticket load history: ${ticketLoadSync.error}`,
-    remoteSessionSync.error && `NinjaOne: ${remoteSessionSync.error}`,
-    healthDailySyncError && `Trend history: ${healthDailySyncError}`,
-    techScoreSyncError && `Trend history: ${techScoreSyncError}`,
+    ...(syncStatus?.lastError ? syncStatus.lastError.split(" · ") : []),
     directoryResult.error && `Directory lookup: ${directoryResult.error}`,
   ].filter((e): e is string => Boolean(e));
 
@@ -307,8 +287,17 @@ export default async function TechPerformancePage() {
     const myTech = techs.find((t) => t.person === session.techPerson);
     return (
       <div className="mx-auto max-w-5xl p-4 md:p-6">
-        <h1 className="font-display text-2xl font-semibold text-text">Your Performance</h1>
-        <p className="mt-1 text-sm text-text-muted">Same scoring and drill-downs your service manager sees for you.</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="font-display text-2xl font-semibold text-text">Your Performance</h1>
+            <p className="mt-1 text-sm text-text-muted">Same scoring and drill-downs your service manager sees for you.</p>
+          </div>
+          <BackgroundSync
+            syncPath="/api/tech-performance/sync"
+            lastSyncedAt={syncStatus?.lastSyncedAt?.toISOString() ?? null}
+            hadLastError={Boolean(syncStatus?.lastError)}
+          />
+        </div>
         <div className="mt-4 flex flex-col gap-2">
           {myTech ? (
             techRow(myTech)
@@ -360,11 +349,20 @@ export default async function TechPerformancePage() {
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-6">
-      <h1 className="font-display text-2xl font-semibold text-text">Tech Performance</h1>
-      <p className="mt-1 text-sm text-text-muted">
-        Summary, then Ticket/Phone/RMM/Team detail and per-tech performance — everything a Service Desk Manager needs
-        today.
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-text">Tech Performance</h1>
+          <p className="mt-1 text-sm text-text-muted">
+            Summary, then Ticket/Phone/RMM/Team detail and per-tech performance — everything a Service Desk Manager
+            needs today.
+          </p>
+        </div>
+        <BackgroundSync
+          syncPath="/api/tech-performance/sync"
+          lastSyncedAt={syncStatus?.lastSyncedAt?.toISOString() ?? null}
+          hadLastError={Boolean(syncStatus?.lastError)}
+        />
+      </div>
 
       <div className="mt-4">
         <MorningBriefCard brief={morningBrief} knownTechs={KNOWN_TECHS} />

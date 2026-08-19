@@ -1,15 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth/roleRank";
 import { getClientProfile } from "@/lib/services/companyProfile";
-import { syncAllClientFinancials } from "@/lib/integrations/quickbooks";
-import { syncSeatReconciliation, fetchNinjaOrganizations } from "@/lib/integrations/ninjaRmm";
+import { fetchNinjaOrganizations } from "@/lib/integrations/ninjaRmm";
 import { fetchCustomers } from "@/lib/integrations/quickbooks";
 import { rollingAverageHours, buildAgreementBreakdown, getClientLaborTrend } from "@/lib/services/clientProfitability";
 import { getKpiSettings } from "@/lib/services/kpiSettings";
 import { LinkAccountsPanel } from "@/components/companyProfile/LinkAccountsPanel";
 import { EffectiveHourlyRateTile } from "@/components/companyProfile/EffectiveHourlyRateTile";
 import { ServiceProfitTile } from "@/components/companyProfile/ServiceProfitTile";
+import { BackgroundSync } from "@/components/shared/BackgroundSync";
 
 function money(value: number): string {
   return value.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -26,12 +27,14 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
   await requireRole("CEO");
   const { id } = await params;
 
-  const [financialsSync, seatSync] = await Promise.all([
-    syncAllClientFinancials(),
-    syncSeatReconciliation(id),
-  ]);
-
-  const [client, ninjaOrganizations, quickbooksCustomers, kpiSettings, laborTrend] = await Promise.all([
+  // No QuickBooks/NinjaOne seat-reconciliation call on this render —
+  // that moved to app/api/clients/[id]/sync/route.ts, fired by
+  // <BackgroundSync> right after the page paints from whatever's already
+  // in the database. fetchNinjaOrganizations/fetchCustomers stay inline
+  // (same as tech-performance's getContactDirectory) — they feed the
+  // account-linking panel directly for this render, not a persisted sync.
+  const [syncStatus, client, ninjaOrganizations, quickbooksCustomers, kpiSettings, laborTrend] = await Promise.all([
+    prisma.syncStatus.findUnique({ where: { id: `clientDetail:${id}` } }),
     getClientProfile(id),
     fetchNinjaOrganizations().catch(() => []),
     fetchCustomers().catch(() => []),
@@ -41,7 +44,7 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
 
   if (!client) notFound();
 
-  const syncErrors = [financialsSync.error, seatSync.error].filter((e): e is string => Boolean(e));
+  const syncErrors = syncStatus?.lastError ? syncStatus.lastError.split(" · ") : [];
   const clientAvg = rollingAverageHours(client.monthlyHours);
   const agreementBreakdown = buildAgreementBreakdown(client.agreementItems);
   const agreementValue = agreementBreakdown.reduce((sum, g) => sum + g.monthlyValue, 0);
@@ -56,9 +59,16 @@ export default async function CompanyProfilePage({ params }: { params: Promise<{
 
   return (
     <div className="mx-auto max-w-2xl p-4 md:p-6">
-      <Link href="/clients" className="font-data text-xs text-text-faint hover:text-text">
-        ← Client Profitability
-      </Link>
+      <div className="flex items-start justify-between gap-3">
+        <Link href="/clients" className="font-data text-xs text-text-faint hover:text-text">
+          ← Client Profitability
+        </Link>
+        <BackgroundSync
+          syncPath={`/api/clients/${id}/sync`}
+          lastSyncedAt={syncStatus?.lastSyncedAt?.toISOString() ?? null}
+          hadLastError={Boolean(syncStatus?.lastError)}
+        />
+      </div>
       <h1 className="mt-2 font-display text-2xl font-semibold text-text">{client.name}</h1>
       <p className="mt-1 text-sm text-text-muted">
         {client.hoursThisMonth}h logged this month

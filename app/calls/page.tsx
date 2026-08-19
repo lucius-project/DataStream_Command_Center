@@ -1,4 +1,4 @@
-import { syncCallActivity } from "@/lib/integrations/unitedCloud";
+import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth/roleRank";
 import { getContactDirectory } from "@/lib/integrations/contactDirectory";
 import {
@@ -17,11 +17,15 @@ import { TechCallSummary } from "@/components/calls/TechCallSummary";
 import { PhoneAnalyticsPanel } from "@/components/calls/PhoneAnalyticsPanel";
 import { MissedCallRecoveryPanel } from "@/components/calls/MissedCallRecoveryPanel";
 import { CallsPerClientPanel } from "@/components/calls/CallsPerClientPanel";
+import { BackgroundSync } from "@/components/shared/BackgroundSync";
 
 export default async function CallActivityPage() {
   await requireRole("SERVICE_MANAGER");
-  const sync = await syncCallActivity();
-  const [rawCalls, credentialStatus, directoryResult] = await Promise.all([
+  // No United Cloud call on this render — that moved to
+  // app/api/calls/sync/route.ts, fired by <BackgroundSync> right after
+  // the page paints from whatever's already in the database.
+  const [syncStatus, rawCalls, credentialStatus, directoryResult] = await Promise.all([
+    prisma.syncStatus.findUnique({ where: { id: "callActivity" } }),
     getRecentCalls(),
     getUnitedCloudCredentialStatus(),
     // Directory lookup (company names via HaloPSA, tech names via United
@@ -44,17 +48,29 @@ export default async function CallActivityPage() {
     getUnreturnedMissedCalls(directoryResult.directory),
     getCallsPerClient(directoryResult.directory),
   ]);
+  const syncErrors = syncStatus?.lastError ? syncStatus.lastError.split(" · ") : [];
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-6">
-      <h1 className="font-display text-2xl font-semibold text-text">Call Activity</h1>
-      <p className="mt-1 text-sm text-text-muted">
-        Recent calls from United Cloud, last 7 days synced.
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-text">Call Activity</h1>
+          <p className="mt-1 text-sm text-text-muted">
+            Recent calls from United Cloud, last 7 days synced.
+          </p>
+        </div>
+        <BackgroundSync
+          syncPath="/api/calls/sync"
+          lastSyncedAt={syncStatus?.lastSyncedAt?.toISOString() ?? null}
+          hadLastError={Boolean(syncStatus?.lastError)}
+        />
+      </div>
 
-      {sync.error && (
-        <div className="mt-4 rounded-md border border-status-critical/40 bg-status-critical-dim px-4 py-3 text-sm text-status-critical">
-          United Cloud sync failed, showing the last synced data: {sync.error}
+      {syncErrors.length > 0 && (
+        <div className="mt-4 flex flex-col gap-2 rounded-md border border-status-critical/40 bg-status-critical-dim px-4 py-3 text-sm text-status-critical">
+          {syncErrors.map((error, i) => (
+            <div key={i}>Sync failed, showing the last synced data — {error}</div>
+          ))}
         </div>
       )}
 
@@ -108,7 +124,7 @@ export default async function CallActivityPage() {
           <CallRow key={call.id} call={call} />
         ))}
 
-        {calls.length === 0 && !sync.error && (
+        {calls.length === 0 && syncErrors.length === 0 && (
           <div className="rounded-lg border border-border bg-panel p-6 text-center text-sm text-text-muted">
             {credentialStatus.configured
               ? "No calls synced in the last 7 days."

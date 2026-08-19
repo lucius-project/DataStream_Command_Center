@@ -1,11 +1,11 @@
 import Link from "next/link";
+import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth/roleRank";
-import { syncClientProfitability } from "@/lib/integrations/haloClients";
-import { syncAllClientFinancials } from "@/lib/integrations/quickbooks";
 import { getClientProfitabilityReport, rollingAverageHours, buildAgreementBreakdown } from "@/lib/services/clientProfitability";
 import { getKpiSettings } from "@/lib/services/kpiSettings";
 import { SyncHistoryButton } from "@/components/clients/SyncHistoryButton";
 import { FinancialSummaryTable } from "@/components/clients/FinancialSummaryTable";
+import { BackgroundSync } from "@/components/shared/BackgroundSync";
 
 function monthLabel(avg: ReturnType<typeof rollingAverageHours>): string {
   if (avg.monthsCovered === 0) return "";
@@ -27,19 +27,27 @@ function unitMoney(value: number): string {
 
 export default async function ClientsPage() {
   await requireRole("CEO");
-  const [sync, financialsSync] = await Promise.all([syncClientProfitability(), syncAllClientFinancials()]);
-  const [clients, kpiSettings] = await Promise.all([getClientProfitabilityReport(), getKpiSettings()]);
+  // No HaloPSA/QuickBooks calls on this render — those moved to
+  // app/api/clients/sync/route.ts, fired by <BackgroundSync> right after
+  // the page paints from whatever's already in the database.
+  const [syncStatus, clients, kpiSettings] = await Promise.all([
+    prisma.syncStatus.findUnique({ where: { id: "clientProfitability" } }),
+    getClientProfitabilityReport(),
+    getKpiSettings(),
+  ]);
+  const syncErrors = syncStatus?.lastError ? syncStatus.lastError.split(" · ") : [];
 
   const totalHours = Math.round(clients.reduce((sum, c) => sum + c.hoursThisMonth, 0) * 10) / 10;
-  // Managed IT vs. Break Fix — the same "has a real agreement" signal
-  // already used for the "N with agreement" stat and every other
-  // agreement-derived figure on this page (Financial Summary, IT
-  // Service Agreement breakdown), just used here to split the client
-  // list into the two groups an MSP actually thinks in: recurring
-  // managed clients vs. ad-hoc/time-and-materials ones with no contract
-  // on file at all.
-  const managedClients = clients.filter((c) => c.agreementItems.length > 0);
-  const breakFixClients = clients.filter((c) => c.agreementItems.length === 0);
+  // Managed / Co-Managed / Break Fix — Client.serviceModel, computed at
+  // sync time from each client's own HaloPSA contract ref (see
+  // haloClients.ts and Client.serviceModel's schema comment for why
+  // this has to be persisted rather than derived from AgreementItem
+  // here). The three groups an MSP actually thinks in: fully managed,
+  // sharing IT duties with the client's own staff, and ad-hoc/
+  // time-and-materials with no contract on file at all.
+  const managedClients = clients.filter((c) => c.serviceModel === "MANAGED");
+  const coManagedClients = clients.filter((c) => c.serviceModel === "CO_MANAGED");
+  const breakFixClients = clients.filter((c) => c.serviceModel === "BREAK_FIX");
   const linkedClients = clients.filter((c) => c.financials);
   const totalRevenue = linkedClients.reduce((sum, c) => sum + c.financials!.revenueThisMonth, 0);
   const totalProfit = linkedClients.reduce((sum, c) => sum + c.financials!.netProfit, 0);
@@ -65,8 +73,8 @@ export default async function ClientsPage() {
     Array.from(combinedMonthly, ([yearMonth, hours]) => ({ yearMonth, hours })),
   );
 
-  // Shared card markup for both the Managed IT and Break Fix groups
-  // below — same card, just two different slices of `clients` feeding
+  // Shared card markup for all three groups below (Managed/Co-Managed/
+  // Break Fix) — same card, just different slices of `clients` feeding
   // it, so a Break Fix client (no agreementItems) naturally renders
   // without an agreement-badges row rather than needing a second layout.
   function clientCard(client: (typeof clients)[number]) {
@@ -206,13 +214,21 @@ export default async function ClientsPage() {
             from QuickBooks for every linked client.
           </p>
         </div>
-        <SyncHistoryButton />
+        <div className="flex flex-col items-end gap-1.5">
+          <BackgroundSync
+            syncPath="/api/clients/sync"
+            lastSyncedAt={syncStatus?.lastSyncedAt?.toISOString() ?? null}
+            hadLastError={Boolean(syncStatus?.lastError)}
+          />
+          <SyncHistoryButton />
+        </div>
       </div>
 
-      {(sync.error || financialsSync.error) && (
+      {syncErrors.length > 0 && (
         <div className="mt-4 flex flex-col gap-2 rounded-md border border-status-critical/40 bg-status-critical-dim px-4 py-3 text-sm text-status-critical">
-          {sync.error && <div>HaloPSA sync failed, showing the last synced data: {sync.error}</div>}
-          {financialsSync.error && <div>QuickBooks sync failed, showing the last synced data: {financialsSync.error}</div>}
+          {syncErrors.map((error, i) => (
+            <div key={i}>Sync failed, showing the last synced data — {error}</div>
+          ))}
         </div>
       )}
 
@@ -236,7 +252,9 @@ export default async function ClientsPage() {
           <div>
             <div className="font-display text-xl font-semibold text-text">{clients.length}</div>
             <div className="font-data text-[11px] text-text-faint">
-              clients{managedClients.length !== clients.length ? ` · ${managedClients.length} managed / ${breakFixClients.length} break fix` : ""}
+              clients
+              {managedClients.length !== clients.length &&
+                ` · ${managedClients.length} managed / ${coManagedClients.length} co-managed / ${breakFixClients.length} break fix`}
             </div>
           </div>
           {linkedClients.length > 0 && (
@@ -298,12 +316,25 @@ export default async function ClientsPage() {
       {managedClients.length > 0 && (
         <div className="mt-6">
           <div className="flex items-baseline justify-between gap-2">
-            <div className="font-display text-sm font-medium text-text">Managed IT</div>
+            <div className="font-display text-sm font-medium text-text">Managed</div>
             <div className="font-data text-[11px] text-text-faint">
-              {managedClients.length} {managedClients.length === 1 ? "client" : "clients"} with a contract agreement
+              {managedClients.length} {managedClients.length === 1 ? "client" : "clients"} fully managed
             </div>
           </div>
           <div className="mt-2 flex flex-col gap-3">{managedClients.map((client) => clientCard(client))}</div>
+        </div>
+      )}
+
+      {coManagedClients.length > 0 && (
+        <div className="mt-6">
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="font-display text-sm font-medium text-text">Co-Managed</div>
+            <div className="font-data text-[11px] text-text-faint">
+              {coManagedClients.length} {coManagedClients.length === 1 ? "client" : "clients"} sharing IT duties
+              with their own staff
+            </div>
+          </div>
+          <div className="mt-2 flex flex-col gap-3">{coManagedClients.map((client) => clientCard(client))}</div>
         </div>
       )}
 
@@ -320,7 +351,7 @@ export default async function ClientsPage() {
         </div>
       )}
 
-      {clients.length === 0 && !sync.error && (
+      {clients.length === 0 && syncErrors.length === 0 && (
         <div className="mt-6 rounded-lg border border-border bg-panel p-6 text-center text-sm text-text-muted">
           No client data yet. Once HaloPSA client read access is granted, this fills in automatically.
         </div>
